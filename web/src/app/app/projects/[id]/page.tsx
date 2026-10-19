@@ -48,7 +48,7 @@ export default function ProjectPage() {
   if (!project) return <p className="mono">Loading</p>;
 
   const latest = new Map<string, Artifact>();
-  for (const a of artifacts) if (!latest.has(a.kind) || latest.get(a.kind)!.version < a.version) latest.set(a.kind, a);
+  for (const a of artifacts) if (a.kind in TAB_LABEL && (!latest.has(a.kind) || latest.get(a.kind)!.version < a.version)) latest.set(a.kind, a);
   const kinds = [...latest.keys()].sort((a, b) => TAB_ORDER.indexOf(a) - TAB_ORDER.indexOf(b));
   // Once the site is built, open on the preview; before that, on the newest deliverable.
   const active = tab && latest.has(tab) ? tab : latest.has("layout") ? "layout" : [...latest.keys()].sort((a, b) => TAB_ORDER.indexOf(a) - TAB_ORDER.indexOf(b)).at(-1) ?? null;
