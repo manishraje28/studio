@@ -24,7 +24,7 @@ export function Header() {
           <Link href="/#pricing" className="no-underline hover:text-[var(--ink)]">Pricing</Link>
           <Link href="/#faq" className="no-underline hover:text-[var(--ink)]">FAQ</Link>
         </div>
-        <Link href="/#start" className="btn btn-primary !px-4 !py-2.5 !text-sm">Start a project</Link>
+        <Link href="/app/new" className="btn btn-primary !px-4 !py-2.5 !text-sm">Start a project</Link>
       </nav>
     </header>
   );

@@ -36,9 +36,7 @@ async def test_create_project_enqueues_kickoff(client, auth, session):
     assert body["status"] == "briefed" and body["business_name"] == "Kaapi House"
 
     jobs = list(await session.scalars(select(Job)))
-    assert [(j.kind, j.status, str(j.project_id)) for j in jobs] == [
-        ("project.kickoff", JobStatus.QUEUED, body["id"])
-    ]
+    assert [(j.kind, j.status, str(j.project_id)) for j in jobs] == [("project.kickoff", JobStatus.QUEUED, body["id"])]
 
 
 async def test_validation(client, auth):

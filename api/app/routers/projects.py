@@ -12,8 +12,8 @@ from app import events, queue
 from app.auth import User
 from app.config import Settings, get_settings
 from app.db import SessionLocal, get_session
-from app.models import Brief, Project
-from app.schemas import BriefIn, EventOut, ProjectOut
+from app.models import Artifact, Brief, Project
+from app.schemas import ArtifactOut, BriefIn, EventOut, ProjectOut
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 Session = Annotated[AsyncSession, Depends(get_session)]
@@ -36,9 +36,7 @@ async def create_project(
     await session.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(str(user.id), 0))))
     start_of_day = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
     today = await session.scalar(
-        select(func.count()).select_from(Project).where(
-            Project.owner_id == user.id, Project.created_at >= start_of_day
-        )
+        select(func.count()).select_from(Project).where(Project.owner_id == user.id, Project.created_at >= start_of_day)
     )
     if (today or 0) >= settings.daily_project_limit:
         raise HTTPException(
@@ -64,9 +62,7 @@ async def create_project(
 
 @router.get("", response_model=list[ProjectOut])
 async def list_projects(user: User, session: Session) -> list[Project]:
-    rows = await session.scalars(
-        select(Project).where(Project.owner_id == user.id).order_by(Project.created_at.desc())
-    )
+    rows = await session.scalars(select(Project).where(Project.owner_id == user.id).order_by(Project.created_at.desc()))
     return list(rows)
 
 
@@ -76,17 +72,13 @@ async def get_project(project_id: uuid.UUID, user: User, session: Session) -> Pr
 
 
 @router.get("/{project_id}/events", response_model=list[EventOut])
-async def list_events(
-    project_id: uuid.UUID, user: User, session: Session, after: Annotated[int, Query(ge=0)] = 0
-):
+async def list_events(project_id: uuid.UUID, user: User, session: Session, after: Annotated[int, Query(ge=0)] = 0):
     await owned_project(session, project_id, user.id)
     return await events.since(session, project_id, after)
 
 
 @router.get("/{project_id}/events/stream")
-async def stream_events(
-    project_id: uuid.UUID, user: User, request: Request, after: Annotated[int, Query(ge=0)] = 0
-):
+async def stream_events(project_id: uuid.UUID, user: User, request: Request, after: Annotated[int, Query(ge=0)] = 0):
     """Server-sent events for the live studio floor. Polls the table once a second."""
     async with SessionLocal() as session:
         await owned_project(session, project_id, user.id)
@@ -102,3 +94,13 @@ async def stream_events(
             await asyncio.sleep(1)
 
     return EventSourceResponse(gen(), ping=15)
+
+
+@router.get("/{project_id}/artifacts", response_model=list[ArtifactOut])
+async def list_artifacts(project_id: uuid.UUID, user: User, session: Session) -> list[Artifact]:
+    """Every version of every deliverable, newest first."""
+    await owned_project(session, project_id, user.id)
+    rows = await session.scalars(
+        select(Artifact).where(Artifact.project_id == project_id).order_by(Artifact.kind, Artifact.version.desc())
+    )
+    return list(rows)

@@ -1,6 +1,8 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import select
+
 from app import queue
 from app.db import SessionLocal
 from app.events import since
@@ -83,12 +85,13 @@ async def test_worker_runs_kickoff(session, user_id):
     await session.commit()
 
     assert await run_one(SessionLocal, "test") is True
-    assert await run_one(SessionLocal, "test") is False
 
     await session.refresh(project)
     assert project.status == ProjectStatus.RESEARCHING
     evs = await since(session, project.id)
     assert [(e.agent, e.kind) for e in evs] == [("Producer", "status")]
+    queued = list(await session.scalars(select(Job).where(Job.status == JobStatus.QUEUED)))
+    assert [j.kind for j in queued] == ["agent.research"]
 
 
 async def test_worker_records_handler_errors(session):

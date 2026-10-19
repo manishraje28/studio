@@ -53,3 +53,14 @@ class EventOut(BaseModel):
     message: str
     data: dict[str, Any]
     created_at: datetime
+
+
+class ArtifactOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    kind: str
+    version: int
+    agent: str
+    content: dict[str, Any]
+    created_at: datetime

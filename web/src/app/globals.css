@@ -60,6 +60,13 @@ p { margin: 0; }
 .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; }
+.field {
+  width: 100%; padding: 11px 13px; border: 1px solid var(--line); border-radius: 6px; background: var(--card);
+  font: 400 15px var(--font-inter-tight), sans-serif; color: var(--ink);
+}
+.field:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+textarea.field { min-height: 92px; resize: vertical; line-height: 1.5; }
+.btn:disabled { opacity: .55; cursor: default; transform: none; box-shadow: none; }
 .chip { font: 500 11px var(--font-jetbrains), monospace; padding: 3px 7px; border: 1px solid var(--line); border-radius: 4px; color: var(--muted); }
 
 }

@@ -6,7 +6,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    env: str = "development"
+    # Safe default: dev-only routes (like /dev/token) exist only when ENV=development is set explicitly.
+    env: str = "production"
     database_url: str = "postgresql+asyncpg://studio:studio@localhost:54322/studio"
 
     # Supabase Auth. Projects with asymmetric signing keys verify through JWKS (supabase_url);

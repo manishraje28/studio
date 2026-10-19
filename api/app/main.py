@@ -5,7 +5,7 @@ from sqlalchemy import text
 from app.auth import User
 from app.config import get_settings
 from app.db import SessionLocal
-from app.routers import llm, projects
+from app.routers import dev, llm, projects
 
 settings = get_settings()
 
@@ -19,6 +19,8 @@ app.add_middleware(
 )
 app.include_router(projects.router)
 app.include_router(llm.router)
+if settings.env == "development":
+    app.include_router(dev.router)
 
 
 @app.get("/health", tags=["meta"])

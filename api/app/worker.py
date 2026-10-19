@@ -2,7 +2,7 @@
 
 Handlers are registered by job kind. Each handler gets its own session and the claimed job,
 and returns a JSON-able result. Raising marks the job failed (and retried with backoff).
-Agent handlers arrive in step 4; for now `project.kickoff` records that the brief was received.
+Handlers live in app/agents/pipeline.py and register themselves in app/registry.py.
 """
 
 import asyncio
@@ -10,47 +10,19 @@ import logging
 import os
 import socket
 import traceback
-from collections.abc import Awaitable, Callable
 from datetime import timedelta
-from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app import queue
+from app.agents import pipeline  # noqa: F401  (registers the agent job handlers)
 from app.config import get_settings
 from app.db import SessionLocal
 from app.events import emit
-from app.models import Job, Project, ProjectStatus
+from app.models import Job, JobStatus, Project, ProjectStatus
+from app.registry import HANDLERS
 
 log = logging.getLogger("studio.worker")
-
-Handler = Callable[[AsyncSession, Job], Awaitable[dict[str, Any] | None]]
-HANDLERS: dict[str, Handler] = {}
-
-
-def handler(kind: str) -> Callable[[Handler], Handler]:
-    def register(fn: Handler) -> Handler:
-        HANDLERS[kind] = fn
-        return fn
-
-    return register
-
-
-@handler("project.kickoff")
-async def kickoff(session: AsyncSession, job: Job) -> dict[str, Any]:
-    project = await session.get(Project, job.project_id)
-    if project is None:
-        return {"skipped": "project deleted"}
-    await emit(
-        session,
-        project.id,
-        agent="Producer",
-        kind="status",
-        message=f"Brief received for {project.business_name}. The researcher is next.",
-    )
-    project.status = ProjectStatus.RESEARCHING
-    await session.commit()
-    return {"status": project.status.value}
 
 
 async def run_one(sessions: async_sessionmaker[AsyncSession], worker_id: str) -> bool:
@@ -74,6 +46,20 @@ async def run_one(sessions: async_sessionmaker[AsyncSession], worker_id: str) ->
                 fresh = await s2.get(Job, job.id)
                 if fresh is not None:
                     await queue.fail(s2, fresh, err)
+                    if fresh.status == JobStatus.FAILED and fresh.project_id:
+                        project = await s2.get(Project, fresh.project_id)
+                        if project is not None:
+                            project.status = ProjectStatus.FAILED
+                            await emit(
+                                s2,
+                                project.id,
+                                "Producer",
+                                "error",
+                                f"The {fresh.kind.removeprefix('agent.')} step failed after {fresh.attempts} attempts "
+                                "and has stopped.",
+                                {"job": fresh.kind},
+                            )
+                            await s2.commit()
             log.warning("job %s %s failed (attempt %s)", job.kind, job.id, job.attempts)
         return True
 

@@ -44,9 +44,7 @@ class Project(Base):
     business_type: Mapped[str] = mapped_column(String(80))
     city: Mapped[str | None] = mapped_column(String(80))
     website_url: Mapped[str | None] = mapped_column(String(500))
-    status: Mapped[ProjectStatus] = mapped_column(
-        _enum(ProjectStatus, "project_status"), default=ProjectStatus.BRIEFED
-    )
+    status: Mapped[ProjectStatus] = mapped_column(_enum(ProjectStatus, "project_status"), default=ProjectStatus.BRIEFED)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -127,3 +125,18 @@ class LLMCall(Base):
     completion_tokens: Mapped[int | None] = mapped_column(Integer)
     error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class Artifact(Base):
+    """A versioned deliverable an agent produced: research file, strategy, style tile, copy, ..."""
+
+    __tablename__ = "artifacts"
+    __table_args__ = (Index("ix_artifacts_project_kind", "project_id", "kind", "version", unique=True),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"))
+    kind: Mapped[str] = mapped_column(String(40))
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    agent: Mapped[str] = mapped_column(String(40))
+    content: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

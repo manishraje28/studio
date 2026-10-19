@@ -146,7 +146,7 @@ class LLMClient:
                 if status is not None and status not in RETRYABLE:
                     break
                 if attempt < self.attempts_per_provider:
-                    await self.sleep(min(retry_after or 2 ** attempt, 20))
+                    await self.sleep(min(retry_after or 2**attempt, 20))
 
         raise AllProvidersFailed("; ".join(errors))
 

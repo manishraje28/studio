@@ -20,10 +20,14 @@ RLS_STATEMENTS = [
     "alter table agent_events enable row level security",
     "alter table jobs enable row level security",
     "alter table llm_calls enable row level security",
+    "alter table artifacts enable row level security",
     "drop policy if exists projects_owner on projects",
     "create policy projects_owner on projects for select using (owner_id = auth.uid())",
     "drop policy if exists briefs_owner on briefs",
     "create policy briefs_owner on briefs for select using "
+    "(exists (select 1 from projects p where p.id = project_id and p.owner_id = auth.uid()))",
+    "drop policy if exists artifacts_owner on artifacts",
+    "create policy artifacts_owner on artifacts for select using "
     "(exists (select 1 from projects p where p.id = project_id and p.owner_id = auth.uid()))",
     "drop policy if exists events_owner on agent_events",
     "create policy events_owner on agent_events for select using "

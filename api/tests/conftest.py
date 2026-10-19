@@ -7,6 +7,11 @@ os.environ["DATABASE_URL"] = os.environ.get(
 os.environ["SUPABASE_JWT_SECRET"] = "test-secret-for-studio-api-at-least-32-bytes"
 os.environ["SUPABASE_URL"] = ""
 os.environ["DAILY_PROJECT_LIMIT"] = "3"
+os.environ["ENV"] = "development"
+# Never let tests reach real model providers, whatever is in .env.
+for _k in ("GEMINI_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY"):
+    os.environ[_k] = ""
+os.environ["LLM_CHAIN"] = '["groq"]'
 
 import time  # noqa: E402
 import uuid  # noqa: E402

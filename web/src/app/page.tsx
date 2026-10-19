@@ -101,7 +101,7 @@ export default function Home() {
               </Reveal>
               <Reveal delay={0.25}>
                 <div className="mt-9 flex flex-wrap gap-3">
-                  <a className="btn btn-primary" href="#start">Start a project <Arrow /></a>
+                  <a className="btn btn-primary" href="/app/new">Start a project <Arrow /></a>
                   <a className="btn btn-ghost" href="#floor">See how a project runs</a>
                 </div>
               </Reveal>
@@ -267,7 +267,7 @@ export default function Home() {
                 <h2 className="text-[clamp(32px,4.4vw,58px)]">Tell us about your business. We will show you a direction by tomorrow.</h2>
                 <p className="mt-4 text-[color-mix(in_srgb,var(--bg)_70%,transparent)]">The first chat is free and takes about 15 minutes. You pay only after you approve the direction.</p>
               </div>
-              <a className="btn justify-self-start border-[var(--bg)] bg-[var(--bg)] text-[var(--ink)] hover:shadow-[3px_3px_0_var(--accent)]" href="#">Start the brief chat <Arrow /></a>
+              <a className="btn justify-self-start border-[var(--bg)] bg-[var(--bg)] text-[var(--ink)] hover:shadow-[3px_3px_0_var(--accent)]" href="/app/new">Start the brief chat <Arrow /></a>
             </div>
           </Reveal>
         </section>
