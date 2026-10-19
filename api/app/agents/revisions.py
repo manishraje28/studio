@@ -20,6 +20,8 @@ from app.models import Artifact, Job, Project, ProjectStatus
 
 EDITABLE = ("strategy", "style", "copy", "layout")
 MAX_PAGES = 8
+# Model calls one change request may spend (planning not included). Keeps the shared free quota safe.
+MAX_CALLS_PER_REVISION = 12
 
 Op = Literal["edit_copy", "add_section", "remove_section", "add_page", "remove_page", "restyle", "relayout"]
 
@@ -129,6 +131,14 @@ async def apply_plan(
     changed: dict[str, dict] = {}
     log: list[str] = []
     replan = False
+    budget = MAX_CALLS_PER_REVISION
+
+    def spend(n: int = 1) -> bool:
+        nonlocal budget
+        if budget < n:
+            return False
+        budget -= n
+        return True
 
     def page_copy(slug: str | None) -> dict | None:
         return next((p for p in site_copy["pages"] if p["slug"] == (slug or "")), None)
@@ -147,6 +157,9 @@ async def apply_plan(
                 else range(len(page["sections"]))
             )
             for i in indexes:
+                if not spend():
+                    log.append("Stopped early: this request was too big for one go, ask for the rest separately")
+                    break
                 await emit(session, project.id, "Copywriter", "progress", f"Rewriting {page['sections'][i]['heading']}")
                 await session.commit()
                 new = await rewrite_section(llm, ctx, page, page["sections"][i], step.instruction)
@@ -156,7 +169,7 @@ async def apply_plan(
 
         elif step.op == "add_section":
             page = page_copy(step.page)
-            if page is None or len(page["sections"]) >= 10:
+            if page is None or len(page["sections"]) >= 10 or not spend():
                 continue
             await emit(session, project.id, "Copywriter", "progress", "Writing a new section")
             await session.commit()
@@ -184,7 +197,7 @@ async def apply_plan(
             changed["copy"], replan = site_copy, True
 
         elif step.op == "add_page":
-            if len(strategy["pages"]) >= MAX_PAGES or not step.title:
+            if len(strategy["pages"]) >= MAX_PAGES or not step.title or not spend(2):
                 continue
             slug = _slugify(step.title)
             while page_plan(slug) is not None:
@@ -211,6 +224,8 @@ async def apply_plan(
             changed["copy"], changed["strategy"], replan = site_copy, strategy, True
 
         elif step.op == "restyle":
+            if not spend(2):
+                continue
             await emit(session, project.id, "Art director", "progress", "Adjusting the look")
             await session.commit()
             tile = await ArtDirector(llm).run(ctx, step.instruction)

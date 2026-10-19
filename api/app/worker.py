@@ -51,7 +51,21 @@ async def run_one(sessions: async_sessionmaker[AsyncSession], worker_id: str) ->
                     await queue.fail(s2, fresh, err)
                     if fresh.status == JobStatus.FAILED and fresh.project_id:
                         project = await s2.get(Project, fresh.project_id)
-                        if project is not None:
+                        if project is not None and fresh.kind in ("agent.revise", "agent.publish"):
+                            # The site itself is fine; give it back to the owner instead of failing the project.
+                            project.status = ProjectStatus.PREVIEW if fresh.kind == "agent.revise" else project.status
+                            await emit(
+                                s2,
+                                project.id,
+                                "Producer",
+                                "error",
+                                "That change could not be made. Your site is unchanged; try wording it differently."
+                                if fresh.kind == "agent.revise"
+                                else "Publishing failed. Your site is unchanged; try again in a minute.",
+                                {"job": fresh.kind},
+                            )
+                            await s2.commit()
+                        elif project is not None:
                             project.status = ProjectStatus.FAILED
                             await emit(
                                 s2,

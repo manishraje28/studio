@@ -378,8 +378,9 @@ async def request_revision(project_id: uuid.UUID, body: RevisionIn, user: User, 
     project = await _locked(session, project_id, user.id)
     if project.status not in READY:
         raise HTTPException(status.HTTP_409_CONFLICT, "Wait until the current work is finished")
+    # Count every attempt, finished or failed, so failures cannot be used to get around the limit.
     done = await session.scalar(
-        select(func.count()).select_from(Artifact).where(Artifact.project_id == project_id, Artifact.kind == "revision")
+        select(func.count()).select_from(Job).where(Job.project_id == project_id, Job.kind == "agent.revise")
     )
     if done >= MAX_REVISIONS:
         raise HTTPException(

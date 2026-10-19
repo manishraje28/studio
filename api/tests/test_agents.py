@@ -643,3 +643,40 @@ async def test_revision_plan_ops_apply(session, user_id, fake_llm, monkeypatch):
     assert slugs == ["", "menu"]  # visit removed, home kept
     assert changed["copy"]["pages"][1]["sections"][-1]["heading"] == "Diwali offer"
     assert "layout" in changed and len(log) == 2
+
+
+async def test_revision_budget_and_failure_recovery(client, auth, user_id, session, fake_llm, monkeypatch):
+    from app.agents import revisions
+    from app.agents.copywriting import SectionCopy
+
+    project = await built_project(client, auth, session, user_id)
+    calls = []
+
+    async def counting_rewrite(llm, ctx, page, section, instruction):
+        calls.append(1)
+        return SectionCopy(section="x", heading="New", body="", cta_label=None)
+
+    monkeypatch.setattr(revisions, "rewrite_section", counting_rewrite)
+    monkeypatch.setattr(revisions, "MAX_CALLS_PER_REVISION", 2)
+    ctx = await pipeline.load_context(session, project)
+    plan = revisions.RevisionPlan(
+        summary="x",
+        steps=[
+            revisions.ChangeStep(op="edit_copy", page="", instruction="all"),
+            revisions.ChangeStep(op="edit_copy", page="menu", instruction="all"),
+            revisions.ChangeStep(op="add_section", page="menu", instruction="more"),
+        ],
+    )
+    _, log = await revisions.apply_plan(session, pipeline.get_llm(), project, ctx, plan)
+    assert len(calls) == 2 and any("Stopped early" in line for line in log)
+
+    async def broken_plan(self, *a):
+        raise RuntimeError("model down")
+
+    monkeypatch.setattr(revisions.Producer, "plan", broken_plan)
+    await client.post(f"/projects/{project.id}/revisions", json={"request": "Change the hero"}, headers=auth)
+    await drain(skip_backoff=True)
+    await session.refresh(project)
+    assert project.status == ProjectStatus.PREVIEW  # a failed change does not break the project
+    msgs = [e.message for e in await since(session, project.id)]
+    assert any("could not be made" in m for m in msgs)
