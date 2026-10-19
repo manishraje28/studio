@@ -14,11 +14,13 @@ from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit
 
+import httpcore
 import httpx
 
 MAX_BYTES = 1_500_000
 MAX_TEXT = 12_000
 MAX_REDIRECTS = 4
+TOTAL_DEADLINE = 30  # seconds for all redirect hops and the body together
 USER_AGENT = "StudioResearchBot/0.1 (+https://github.com/manishraje28/studio)"
 
 
@@ -26,23 +28,68 @@ class FetchError(Exception):
     pass
 
 
+async def _resolve_public(host: str) -> str:
+    """Resolve host and return one of its addresses, refusing if ANY address is not public."""
+    try:
+        infos = await asyncio.get_running_loop().getaddrinfo(host, None, type=socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        raise FetchError(f"cannot resolve {host}") from exc
+    ips = [ipaddress.ip_address(info[4][0]) for info in infos]
+    if not ips or any(not ip.is_global or ip.is_multicast for ip in ips):
+        raise FetchError(f"{host} resolves to a non-public address")
+    return str(ips[0])
+
+
 async def _assert_public(url: str) -> None:
+    """Cheap early check on scheme, port and DNS. The binding check happens in PublicOnlyBackend."""
     parts = urlsplit(url)
     if parts.scheme not in ("http", "https"):
         raise FetchError("only http and https URLs are allowed")
     if parts.port not in (None, 80, 443):
         raise FetchError("only ports 80 and 443 are allowed")
-    host = parts.hostname
-    if not host:
+    if not parts.hostname:
         raise FetchError("URL has no host")
-    try:
-        infos = await asyncio.get_running_loop().getaddrinfo(host, None, type=socket.SOCK_STREAM)
-    except socket.gaierror as exc:
-        raise FetchError(f"cannot resolve {host}") from exc
-    for info in infos:
-        ip = ipaddress.ip_address(info[4][0])
-        if not ip.is_global or ip.is_multicast:
-            raise FetchError(f"{host} resolves to a non-public address")
+    await _resolve_public(parts.hostname)
+
+
+class PublicOnlyBackend(httpcore.AsyncNetworkBackend):
+    """Resolves and vets the host at connect time, then connects to that exact IP.
+
+    Checking a URL and then letting the HTTP client resolve it again leaves a gap where DNS
+    can answer differently (DNS rebinding). Here the address we check is the address we dial.
+    TLS still uses the original hostname for SNI and certificate checks, because httpcore
+    passes server_hostname separately when it upgrades the stream.
+    """
+
+    def __init__(self) -> None:
+        self._inner = httpcore.AnyIOBackend()
+
+    async def connect_tcp(self, host, port, timeout=None, local_address=None, socket_options=None):  # noqa: ASYNC109 (httpcore interface)
+        try:
+            ip = await _resolve_public(host)
+        except FetchError as exc:
+            raise httpcore.ConnectError(str(exc)) from exc
+        return await self._inner.connect_tcp(
+            ip, port, timeout=timeout, local_address=local_address, socket_options=socket_options
+        )
+
+    async def connect_unix_socket(self, path, timeout=None, socket_options=None):  # noqa: ASYNC109
+        raise httpcore.ConnectError("unix sockets are not allowed")
+
+    async def sleep(self, seconds: float) -> None:
+        await self._inner.sleep(seconds)
+
+
+def public_client() -> httpx.AsyncClient:
+    transport = httpx.AsyncHTTPTransport(retries=0)
+    # httpx does not expose network_backend, so swap in a pool that uses ours.
+    transport._pool = httpcore.AsyncConnectionPool(network_backend=PublicOnlyBackend(), max_connections=10)
+    return httpx.AsyncClient(
+        transport=transport,
+        timeout=15,
+        headers={"User-Agent": USER_AGENT, "Accept-Encoding": "identity"},
+        trust_env=False,
+    )
 
 
 @dataclass
@@ -97,8 +144,16 @@ class _Extractor(HTMLParser):
 
 
 async def fetch_page(url: str, client: httpx.AsyncClient | None = None) -> Page:
+    try:
+        async with asyncio.timeout(TOTAL_DEADLINE):
+            return await _fetch(url, client)
+    except TimeoutError as exc:
+        raise FetchError(f"page took longer than {TOTAL_DEADLINE}s") from exc
+
+
+async def _fetch(url: str, client: httpx.AsyncClient | None) -> Page:
     own = client is None
-    client = client or httpx.AsyncClient(timeout=15, headers={"User-Agent": USER_AGENT})
+    client = client or public_client()
     try:
         for _ in range(MAX_REDIRECTS + 1):
             await _assert_public(url)
@@ -111,8 +166,12 @@ async def fetch_page(url: str, client: httpx.AsyncClient | None = None) -> Page:
                 ctype = resp.headers.get("content-type", "")
                 if "html" not in ctype and "text" not in ctype:
                     raise FetchError(f"not a web page ({ctype or 'unknown type'})")
+                # We ask for identity encoding; refuse compressed bodies so the size cap
+                # counts real bytes, not what a small gzip bomb would inflate to.
+                if resp.headers.get("content-encoding", "identity").lower() not in ("identity", ""):
+                    raise FetchError("compressed responses are not accepted")
                 body = bytearray()
-                async for chunk in resp.aiter_bytes():
+                async for chunk in resp.aiter_bytes():  # identity only, so these are the raw bytes
                     body += chunk
                     if len(body) > MAX_BYTES:
                         break
@@ -120,7 +179,7 @@ async def fetch_page(url: str, client: httpx.AsyncClient | None = None) -> Page:
                 parser.feed(body.decode(resp.encoding or "utf-8", errors="replace"))
                 return parser.result(url)
         raise FetchError("too many redirects")
-    except httpx.HTTPError as exc:
+    except (httpx.HTTPError, httpcore.ConnectError) as exc:
         raise FetchError(f"{type(exc).__name__}: {exc}") from exc
     finally:
         if own:

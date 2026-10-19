@@ -184,3 +184,53 @@ async def test_fetch_extracts_text_and_rechecks_redirects(monkeypatch):
     assert checked == ["https://kaapi.example/old", "https://kaapi.example/new"]
     with pytest.raises(FetchError):
         await fetch_page("https://kaapi.example/to-internal", client)
+
+
+async def test_connection_is_pinned_to_a_vetted_address(monkeypatch):
+    """DNS rebinding: the early check sees a public IP, the connect-time lookup sees 127.0.0.1."""
+    import app.agents.webfetch as wf
+
+    answers = iter(["93.184.215.14", "127.0.0.1"])
+
+    async def flipping_resolve(host):
+        ip = next(answers)
+        if ip.startswith("127."):
+            raise FetchError(f"{host} resolves to a non-public address")
+        return ip
+
+    monkeypatch.setattr(wf, "_resolve_public", flipping_resolve)
+    with pytest.raises(FetchError, match="non-public"):
+        await fetch_page("http://rebind.example/")
+
+
+async def test_public_backend_refuses_loopback():
+    from app.agents.webfetch import public_client
+
+    async with public_client() as c:
+        with pytest.raises(httpx.ConnectError, match="non-public"):
+            await c.get("http://127.0.0.1:80/")
+
+
+async def test_fetch_refuses_compressed_and_slow_pages(monkeypatch):
+    import asyncio
+
+    import app.agents.webfetch as wf
+
+    async def ok(_url):
+        return None
+
+    monkeypatch.setattr(wf, "_assert_public", ok)
+
+    def gz(request):
+        return httpx.Response(200, headers={"content-type": "text/html", "content-encoding": "gzip"}, content=b"x")
+
+    with pytest.raises(FetchError, match="compressed"):
+        await fetch_page("https://bomb.example/", httpx.AsyncClient(transport=httpx.MockTransport(gz)))
+
+    async def slow(request):
+        await asyncio.sleep(5)
+        return httpx.Response(200, html="<p>late</p>")
+
+    monkeypatch.setattr(wf, "TOTAL_DEADLINE", 0.2)
+    with pytest.raises(FetchError, match="longer than"):
+        await fetch_page("https://slow.example/", httpx.AsyncClient(transport=httpx.MockTransport(slow)))

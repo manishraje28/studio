@@ -23,6 +23,8 @@ from app.models import Job, JobStatus, Project, ProjectStatus
 from app.registry import HANDLERS
 
 log = logging.getLogger("studio.worker")
+# Hard ceiling per job so one stuck model call or fetch cannot hold a worker forever.
+JOB_TIMEOUT_SECONDS = 300
 
 
 async def run_one(sessions: async_sessionmaker[AsyncSession], worker_id: str) -> bool:
@@ -35,7 +37,8 @@ async def run_one(sessions: async_sessionmaker[AsyncSession], worker_id: str) ->
         try:
             if fn is None:
                 raise LookupError(f"No handler for job kind '{job.kind}'")
-            result = await fn(session, job)
+            async with asyncio.timeout(JOB_TIMEOUT_SECONDS):
+                result = await fn(session, job)
             await queue.complete(session, job, result)
             log.info("job %s %s succeeded", job.kind, job.id)
         except Exception:
