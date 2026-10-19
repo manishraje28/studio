@@ -1,0 +1,101 @@
+import asyncio
+import uuid
+from datetime import UTC, datetime
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sse_starlette.sse import EventSourceResponse
+
+from app import events, queue
+from app.auth import User
+from app.config import Settings, get_settings
+from app.db import SessionLocal, get_session
+from app.models import Brief, Project
+from app.schemas import BriefIn, EventOut, ProjectOut
+
+router = APIRouter(prefix="/projects", tags=["projects"])
+Session = Annotated[AsyncSession, Depends(get_session)]
+
+
+async def owned_project(session: AsyncSession, project_id: uuid.UUID, owner_id: uuid.UUID) -> Project:
+    project = await session.get(Project, project_id)
+    # 404 rather than 403, so ids of other people's projects are not confirmed to exist.
+    if project is None or project.owner_id != owner_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Project not found")
+    return project
+
+
+@router.post("", response_model=ProjectOut, status_code=status.HTTP_201_CREATED)
+async def create_project(
+    body: BriefIn, user: User, session: Session, settings: Annotated[Settings, Depends(get_settings)]
+) -> Project:
+    start_of_day = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    today = await session.scalar(
+        select(func.count()).select_from(Project).where(
+            Project.owner_id == user.id, Project.created_at >= start_of_day
+        )
+    )
+    if (today or 0) >= settings.daily_project_limit:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            f"The demo allows {settings.daily_project_limit} new projects per day. Try again tomorrow.",
+        )
+
+    project = Project(
+        owner_id=user.id,
+        business_name=body.business_name.strip(),
+        business_type=body.business_type.strip(),
+        city=body.city,
+        website_url=str(body.website_url) if body.website_url else None,
+        brief=Brief(answers=body.answers),
+    )
+    session.add(project)
+    await session.flush()
+    await queue.enqueue(session, "project.kickoff", project_id=project.id)
+    await session.commit()
+    await session.refresh(project)
+    return project
+
+
+@router.get("", response_model=list[ProjectOut])
+async def list_projects(user: User, session: Session) -> list[Project]:
+    rows = await session.scalars(
+        select(Project).where(Project.owner_id == user.id).order_by(Project.created_at.desc())
+    )
+    return list(rows)
+
+
+@router.get("/{project_id}", response_model=ProjectOut)
+async def get_project(project_id: uuid.UUID, user: User, session: Session) -> Project:
+    return await owned_project(session, project_id, user.id)
+
+
+@router.get("/{project_id}/events", response_model=list[EventOut])
+async def list_events(
+    project_id: uuid.UUID, user: User, session: Session, after: Annotated[int, Query(ge=0)] = 0
+):
+    await owned_project(session, project_id, user.id)
+    return await events.since(session, project_id, after)
+
+
+@router.get("/{project_id}/events/stream")
+async def stream_events(
+    project_id: uuid.UUID, user: User, request: Request, after: Annotated[int, Query(ge=0)] = 0
+):
+    """Server-sent events for the live studio floor. Polls the table once a second."""
+    async with SessionLocal() as session:
+        await owned_project(session, project_id, user.id)
+
+    async def gen():
+        last = after
+        while not await request.is_disconnected():
+            async with SessionLocal() as session:
+                batch = await events.since(session, project_id, last)
+            for ev in batch:
+                last = ev.id
+                yield {"id": str(ev.id), "event": ev.kind, "data": EventOut.model_validate(ev).model_dump_json()}
+            await asyncio.sleep(1)
+
+    return EventSourceResponse(gen(), ping=15)
