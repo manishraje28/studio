@@ -2,14 +2,14 @@
 
 import { useParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { api, streamEvents, type AgentEvent, type Artifact, type Project } from "@/lib/api";
+import { API_URL, api, streamEvents, type AgentEvent, type Artifact, type Project } from "@/lib/api";
 import { TEAM } from "@/lib/team";
 import { STAGES, STATUS_LABEL, stageIndex } from "@/components/app/status";
 import { CopyView, ResearchView, StrategyView, StyleView } from "@/components/app/ArtifactViews";
 import ApprovalPanel from "@/components/app/ApprovalPanel";
 
-const TAB_LABEL: Record<string, string> = { research: "Research file", strategy: "Strategy", style: "Style tile", copy: "Copy" };
-const TAB_ORDER = ["research", "strategy", "style", "copy"];
+const TAB_LABEL: Record<string, string> = { research: "Research file", strategy: "Strategy", style: "Style tile", copy: "Copy", layout: "Preview" };
+const TAB_ORDER = ["layout", "research", "strategy", "style", "copy"];
 
 const AGENT_COLOR: Record<string, string> = Object.fromEntries(TEAM.map((a) => [a.role, a.color]));
 
@@ -20,12 +20,16 @@ export default function ProjectPage() {
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<string | null>(null);
+  const [previewPath, setPreviewPath] = useState<string | null>(null);
   const seen = useRef(new Set<number>());
 
   useEffect(() => {
     const refresh = () => {
       api.project(id).then(setProject).catch((e) => setError(e.message));
-      api.artifacts(id).then(setArtifacts).catch(() => {});
+      api.artifacts(id).then((list) => {
+        setArtifacts(list);
+        if (list.some((a) => a.kind === "layout")) api.previewPath(id).then((r) => setPreviewPath(r.path)).catch(() => {});
+      }).catch(() => {});
     };
     refresh();
     const stop = streamEvents(id, (ev) => {
@@ -44,9 +48,10 @@ export default function ProjectPage() {
   const latest = new Map<string, Artifact>();
   for (const a of artifacts) if (!latest.has(a.kind) || latest.get(a.kind)!.version < a.version) latest.set(a.kind, a);
   const kinds = [...latest.keys()].sort((a, b) => TAB_ORDER.indexOf(a) - TAB_ORDER.indexOf(b));
-  const active = tab && latest.has(tab) ? tab : kinds.at(-1) ?? null;
+  // Once the site is built, open on the preview; before that, on the newest deliverable.
+  const active = tab && latest.has(tab) ? tab : latest.has("layout") ? "layout" : [...latest.keys()].sort((a, b) => TAB_ORDER.indexOf(a) - TAB_ORDER.indexOf(b)).at(-1) ?? null;
   const current = stageIndex(project.status);
-  const working = !["failed", "awaiting_approval", "building"].includes(project.status);
+  const working = !["failed", "awaiting_approval", "preview", "live"].includes(project.status);
   const style = latest.get("style");
   const strategy = latest.get("strategy")?.content as { primary_action?: { label: string } } | undefined;
 
@@ -126,6 +131,20 @@ export default function ProjectPage() {
               <StyleView content={style.content} businessName={project.business_name} actionLabel={strategy?.primary_action?.label} />
             )}
             {active === "copy" && <CopyView content={latest.get("copy")!.content} />}
+            {active === "layout" && previewPath && (
+              <div className="flex flex-col gap-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm text-[var(--muted)]">This is your site as it stands. Highlighted [details] still need your input.</p>
+                  <a className="btn btn-ghost !py-1.5 !text-[13px]" href={`${API_URL}${previewPath}`} target="_blank" rel="noopener noreferrer">Open full size</a>
+                </div>
+                <iframe
+                  title={`Preview of ${project.business_name}`}
+                  src={`${API_URL}${previewPath}`}
+                  sandbox=""
+                  className="h-[70vh] w-full rounded-lg border border-[var(--line)] bg-white"
+                />
+              </div>
+            )}
           </div>
         </section>
       </div>

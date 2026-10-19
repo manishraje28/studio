@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     jwt_audience: str = "authenticated"
 
     cors_origins: list[str] = ["http://localhost:3000"]
+    # Signs preview links. Falls back to SUPABASE_JWT_SECRET when unset.
+    preview_secret: str | None = None
 
     # Free-tier guardrail: how many projects one user may start per UTC day.
     daily_project_limit: int = 3

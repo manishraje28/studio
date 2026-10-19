@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 Source = Literal["brief", "website", "general knowledge"]
 
@@ -43,3 +43,21 @@ class Strategy(BaseModel):
     messaging_pillars: list[str] = Field(min_length=3, max_length=3)
     pages: list[PagePlan] = Field(min_length=3, max_length=7)
     seo_keywords: list[str] = Field(min_length=3, max_length=10)
+
+
+class PageLayout(BaseModel):
+    slug: str
+    blocks: list[str] = Field(description="One layout name per section, in order")
+
+    @field_validator("blocks")
+    @classmethod
+    def known_layouts(cls, v: list[str]) -> list[str]:
+        from app.site.render import LAYOUTS
+
+        if bad := [b for b in v if b not in LAYOUTS]:
+            raise ValueError(f"unknown layouts {bad}; use only {LAYOUTS}")
+        return v
+
+
+class LayoutPlan(BaseModel):
+    pages: list[PageLayout]

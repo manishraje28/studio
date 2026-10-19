@@ -10,10 +10,11 @@ from typing import Any
 
 from app.agents.copywriting import PageCopy
 from app.agents.design import StyleTile
-from app.agents.schemas import ResearchDossier, Strategy
+from app.agents.schemas import LayoutPlan, ResearchDossier, Strategy
 from app.agents.webfetch import FetchError, Page, fetch_page
 from app.llm import LLMClient
 from app.models import Project
+from app.site.render import LAYOUTS
 
 log = logging.getLogger("studio.agents")
 
@@ -33,6 +34,16 @@ DESIGN_RULES = """Design rules:
 - Buttons are rectangles with small radius, never pill shaped.
 - No emoji as icons, no stock photos of people, no fake customer logos or counters.
 - Restraint: one or two strong ideas, not many effects. Motion is subtle."""
+
+LAYOUT_GUIDE = """- hero_split: big heading, intro and button, with a decorative panel beside it. Best first section.
+- hero_center: centred big heading and button. A calmer first section.
+- text: heading on the left, paragraphs on the right. Stories and explanations.
+- cards: heading and a grid of short items. Services, products, reasons.
+- list: heading and a bullet list. Practical details, what to bring.
+- steps: numbered steps. How to order, book or get started.
+- cta_band: full-width coloured band with a button. Closing push to the main action.
+- contact: contact details as label and value pairs. Address, phone, hours."""
+assert set(LAYOUTS) >= {"hero_split", "hero_center", "text", "cards", "list", "steps", "cta_band", "contact"}
 
 COPY_RULES = """Copy rules:
 - Write like the owner talking to a regular customer: short sentences, concrete nouns, no hype.
@@ -179,3 +190,49 @@ class Copywriter:
             temperature=0.6,
             max_tokens=3000,
         )
+
+
+class Developer:
+    """Chooses a layout block for every section. Rendering is done by code in app/site."""
+
+    name = "Developer"
+
+    def __init__(self, llm: LLMClient):
+        self.llm = llm
+
+    async def plan(self, ctx: Context) -> LayoutPlan:
+        pages = [
+            {
+                "slug": p["slug"],
+                "sections": [
+                    {
+                        "section": s["section"],
+                        "heading": s["heading"],
+                        "body_start": s["body"][:160],
+                        "has_button": bool(s.get("cta_label")),
+                    }
+                    for s in p["sections"]
+                ],
+            }
+            for p in ctx.artifacts["copy"]["pages"]
+        ]
+        prompt = (
+            f"Layouts you can use:\n{LAYOUT_GUIDE}\n\nPages and their sections, in order:\n"
+            f"{json.dumps(pages, ensure_ascii=False, indent=1)}\n\n"
+            "Choose one layout per section, in the same order, for every page. The first section of each page "
+            "is usually a hero. Vary layouts so pages do not feel repetitive. Use cta_band at most once per page."
+        )
+        plan = await self.llm.complete_json(
+            LayoutPlan,
+            [{"role": "user", "content": prompt}],
+            system=f"You are the Developer at Studio. You build pages from fixed layout blocks.\n{GROUND_RULES}",
+            project_id=ctx.project.id,
+            agent=self.name,
+            temperature=0.3,
+        )
+        # Keep the plan aligned with the copy even if the model miscounted sections.
+        counts = {p["slug"]: len(p["sections"]) for p in pages}
+        for page in plan.pages:
+            n = counts.get(page.slug, 0)
+            page.blocks = (page.blocks + ["text"] * n)[:n]
+        return plan

@@ -1,0 +1,154 @@
+{#- One page of a client site. Everything from the model is autoescaped; no scripts are emitted. -#}
+{%- macro ph(text) -%}{{ text | placeholders }}{%- endmacro -%}
+{%- macro paragraphs(text) -%}
+  {%- for para in text | paragraphs %}<p>{{ ph(para) }}</p>{% endfor -%}
+{%- endmacro -%}
+{%- macro button(label, href, ghost=False) -%}
+  <a class="btn{% if ghost %} ghost{% endif %}" href="{{ href }}">{{ ph(label) }}</a>
+{%- endmacro -%}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ page.seo_title }}</title>
+<meta name="description" content="{{ page.meta_description }}">
+<link rel="icon" href="data:image/svg+xml,{{ favicon | urlencode }}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="{{ fonts_url }}">
+<style>
+:root{
+  --bg:{{ p.background }};--surface:{{ p.surface }};--ink:{{ p.ink }};--muted:{{ p.muted }};
+  --accent:{{ p.accent }};--accent-ink:{{ p.accent_ink }};
+  --head:"{{ t.heading_font }}",Georgia,serif;--body:"{{ t.body_font }}",system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 17px/1.65 var(--body);-webkit-font-smoothing:antialiased}
+h1,h2,h3{font-family:var(--head);font-weight:600;letter-spacing:-.015em;line-height:1.1;margin:0 0 .5em}
+{% if t.heading_style == "italic accents" %}h1 em,h2 em{font-style:italic;font-weight:400}{% endif %}
+{% if t.heading_style == "all caps small" %}h2{text-transform:uppercase;letter-spacing:.06em;font-size:clamp(20px,2.2vw,26px)!important}{% endif %}
+{% if t.heading_style == "tight and heavy" %}h1,h2{font-weight:800;letter-spacing:-.03em}{% endif %}
+p{margin:0 0 1em;max-width:62ch}
+a{color:inherit}
+.wrap{max-width:1120px;margin:0 auto;padding:0 clamp(18px,4vw,40px)}
+.ph{background:color-mix(in srgb,var(--accent) 18%,transparent);border-radius:3px;padding:0 3px}
+header{border-bottom:1px solid color-mix(in srgb,var(--ink) 12%,transparent)}
+header .wrap{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:68px;flex-wrap:wrap}
+.brand{font:600 21px var(--head);text-decoration:none}
+nav{display:flex;gap:22px;flex-wrap:wrap;font-size:15px}
+nav a{text-decoration:none;color:var(--muted)}
+nav a[aria-current]{color:var(--ink);font-weight:600}
+.btn{display:inline-block;padding:13px 20px;border-radius:6px;background:var(--accent);color:var(--accent-ink);font-weight:600;font-size:15px;text-decoration:none;border:1.5px solid var(--accent)}
+.btn.ghost{background:transparent;color:var(--ink);border-color:color-mix(in srgb,var(--ink) 30%,transparent)}
+section{padding:clamp(56px,8vw,96px) 0}
+section+section{border-top:1px solid color-mix(in srgb,var(--ink) 9%,transparent)}
+.kicker{font:600 12px var(--body);letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin-bottom:14px}
+.hero h1{font-size:clamp(38px,6vw,72px)}
+.hero .lead{font-size:clamp(17px,1.6vw,20px);color:var(--muted)}
+.hero.split .wrap{display:grid;grid-template-columns:1.25fr 1fr;gap:clamp(28px,5vw,64px);align-items:center}
+.motif{aspect-ratio:4/5;border-radius:10px;background:var(--surface);position:relative;overflow:hidden;border:1px solid color-mix(in srgb,var(--ink) 10%,transparent)}
+.motif svg{position:absolute;inset:0;width:100%;height:100%}
+.motif span{position:absolute;left:20px;bottom:18px;right:20px;font:italic 400 clamp(18px,2vw,24px) var(--head);color:var(--ink)}
+.hero.center{text-align:center}.hero.center p{margin-left:auto;margin-right:auto}
+.actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:28px}
+.hero.center .actions{justify-content:center}
+h2{font-size:clamp(28px,3.6vw,44px)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:16px;margin-top:28px}
+.card{background:var(--surface);border:1px solid color-mix(in srgb,var(--ink) 10%,transparent);border-radius:10px;padding:22px}
+.card p{margin:0}
+ol.steps{list-style:none;padding:0;margin:28px 0 0;display:grid;gap:14px;counter-reset:s}
+ol.steps li{counter-increment:s;display:grid;grid-template-columns:44px 1fr;gap:14px;align-items:start}
+ol.steps li::before{content:counter(s);font:600 20px var(--head);width:44px;height:44px;border-radius:50%;display:grid;place-items:center;background:var(--accent);color:var(--accent-ink)}
+ul.list{padding-left:20px;margin:16px 0 0}ul.list li{margin:6px 0}
+.band{background:var(--accent);color:var(--accent-ink)}
+.band h2{color:var(--accent-ink)}
+.band .btn{background:var(--accent-ink);color:var(--accent);border-color:var(--accent-ink)}
+.band .wrap{display:flex;justify-content:space-between;align-items:center;gap:24px;flex-wrap:wrap}
+dl.contact{display:grid;grid-template-columns:max-content 1fr;gap:10px 24px;margin:24px 0 0}
+dl.contact dt{font-weight:600}dl.contact dd{margin:0;color:var(--muted)}
+.two{display:grid;grid-template-columns:1fr 1.4fr;gap:clamp(24px,5vw,64px)}
+footer{padding:36px 0 48px;color:var(--muted);font-size:14px;border-top:1px solid color-mix(in srgb,var(--ink) 12%,transparent)}
+footer .wrap{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+@media(max-width:760px){.hero.split .wrap,.two{grid-template-columns:1fr}.motif{aspect-ratio:16/9}dl.contact{grid-template-columns:1fr}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <a class="brand" href="{{ url('') }}">{{ site.business_name }}</a>
+  <nav aria-label="Main">
+    {%- for p_ in site.pages %}
+    <a href="{{ url(p_.slug) }}"{% if p_.slug == page.slug %} aria-current="page"{% endif %}>{{ p_.nav_label }}</a>
+    {%- endfor %}
+  </nav>
+</div></header>
+<main>
+{%- for b in blocks %}
+{%- set s = b.section %}
+{%- if b.layout in ("hero_split", "hero_center") %}
+<section class="hero {{ 'split' if b.layout == 'hero_split' else 'center' }}"><div class="wrap">
+  <div>
+    <div class="kicker">{{ site.business_type }}{% if site.city %} · {{ site.city }}{% endif %}</div>
+    <h1>{{ ph(s.heading) }}</h1>
+    <div class="lead">{{ paragraphs(s.body) }}</div>
+    <div class="actions">{{ button(s.cta_label or site.primary_action, cta_href) }}</div>
+  </div>
+  {%- if b.layout == "hero_split" %}
+  <div class="motif" aria-hidden="true">
+    <svg viewBox="0 0 400 500" preserveAspectRatio="xMidYMid slice">
+      {%- for i in range(9) %}<circle cx="{{ 60 + (i % 3) * 140 }}" cy="{{ 80 + (i // 3) * 150 }}" r="{{ 34 + (i % 2) * 18 }}" fill="var(--accent)" opacity="{{ 0.10 + (i % 3) * 0.07 }}"/>{% endfor %}
+      <path d="M0 420 Q200 360 400 430 L400 500 L0 500Z" fill="var(--accent)" opacity=".18"/>
+    </svg>
+    {%- if site.signature %}<span>{{ site.signature }}</span>{% endif %}
+  </div>
+  {%- endif %}
+</div></section>
+{%- elif b.layout == "text" %}
+<section><div class="wrap two">
+  <h2>{{ ph(s.heading) }}</h2>
+  <div>{{ paragraphs(s.body) }}{% if s.cta_label %}<div class="actions">{{ button(s.cta_label, cta_href, True) }}</div>{% endif %}</div>
+</div></section>
+{%- elif b.layout in ("cards", "list") %}
+{%- set items = s.body | items %}
+<section><div class="wrap">
+  <h2>{{ ph(s.heading) }}</h2>
+  {%- if items.lead %}<p>{{ ph(items.lead) }}</p>{% endif %}
+  {%- if b.layout == "cards" %}
+  <div class="grid">{% for it in items.entries %}<div class="card"><p>{{ ph(it) }}</p></div>{% endfor %}</div>
+  {%- else %}
+  <ul class="list">{% for it in items.entries %}<li>{{ ph(it) }}</li>{% endfor %}</ul>
+  {%- endif %}
+  {%- if s.cta_label %}<div class="actions">{{ button(s.cta_label, cta_href) }}</div>{% endif %}
+</div></section>
+{%- elif b.layout == "steps" %}
+{%- set items = s.body | items %}
+<section><div class="wrap">
+  <h2>{{ ph(s.heading) }}</h2>
+  {%- if items.lead %}<p>{{ ph(items.lead) }}</p>{% endif %}
+  <ol class="steps">{% for it in items.entries %}<li><p>{{ ph(it) }}</p></li>{% endfor %}</ol>
+  {%- if s.cta_label %}<div class="actions">{{ button(s.cta_label, cta_href) }}</div>{% endif %}
+</div></section>
+{%- elif b.layout == "cta_band" %}
+<section class="band"><div class="wrap">
+  <div><h2>{{ ph(s.heading) }}</h2>{{ paragraphs(s.body) }}</div>
+  {{ button(s.cta_label or site.primary_action, cta_href) }}
+</div></section>
+{%- elif b.layout == "contact" %}
+{%- set c = s.body | contact %}
+<section id="contact"><div class="wrap two">
+  <div><h2>{{ ph(s.heading) }}</h2>{% for para in c.text %}<p>{{ ph(para) }}</p>{% endfor %}</div>
+  <div>
+    {%- if c.pairs %}<dl class="contact">{% for k, v in c.pairs %}<dt>{{ k }}</dt><dd>{{ ph(v) }}</dd>{% endfor %}</dl>{% endif %}
+    {%- if s.cta_label %}<div class="actions">{{ button(s.cta_label, cta_href) }}</div>{% endif %}
+  </div>
+</div></section>
+{%- endif %}
+{%- endfor %}
+</main>
+<footer><div class="wrap">
+  <span>© {{ year }} {{ site.business_name }}</span>
+  <span>{{ site.business_type }}{% if site.city %}, {{ site.city }}{% endif %}</span>
+</div></footer>
+</body>
+</html>

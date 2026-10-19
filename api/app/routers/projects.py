@@ -17,6 +17,8 @@ from app.models import Artifact, Brief, Project, ProjectStatus
 from app.schemas import ArtifactOut, BriefIn, DirectionDecision, EventOut, ProjectOut
 
 router = APIRouter(prefix="/projects", tags=["projects"])
+# Each revision costs model calls from the shared free quota.
+MAX_STYLE_VERSIONS = 5
 Session = Annotated[AsyncSession, Depends(get_session)]
 
 
@@ -112,7 +114,12 @@ async def decide_direction(project_id: uuid.UUID, body: DirectionDecision, user:
     """The approval gate after art direction: approve to start the copy, or send notes back."""
     await owned_project(session, project_id, user.id)
     # Lock the row so a double click cannot queue the next step twice.
-    project = await session.scalar(select(Project).where(Project.id == project_id).with_for_update())
+    project = await session.scalar(
+        select(Project)
+        .where(Project.id == project_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)  # re-read under the lock, not the cached copy
+    )
     if project.status != ProjectStatus.AWAITING_APPROVAL:
         raise HTTPException(status.HTTP_409_CONFLICT, "There is no direction waiting for approval")
 
@@ -121,6 +128,16 @@ async def decide_direction(project_id: uuid.UUID, body: DirectionDecision, user:
         await emit(session, project.id, "Creative director", "status", "Direction approved. The copywriter starts now.")
         await queue.enqueue(session, "agent.copy", project_id=project.id)
     else:
+        versions = await session.scalar(
+            select(func.count())
+            .select_from(Artifact)
+            .where(Artifact.project_id == project.id, Artifact.kind == "style")
+        )
+        if versions >= MAX_STYLE_VERSIONS:
+            raise HTTPException(
+                status.HTTP_429_TOO_MANY_REQUESTS,
+                f"This demo allows {MAX_STYLE_VERSIONS} versions of the direction. Approve one to continue.",
+            )
         note = (body.note or "").strip()
         if len(note) < 5:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Tell the art director what to change")

@@ -10,11 +10,12 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import queue
-from app.agents.team import ArtDirector, Context, Copywriter, Researcher, Strategist
+from app.agents.team import ArtDirector, Context, Copywriter, Developer, Researcher, Strategist
 from app.events import emit
 from app.llm import get_llm
 from app.models import Artifact, Brief, Job, Project, ProjectStatus
 from app.registry import handler
+from app.site.render import render_site
 
 
 async def load_context(session: AsyncSession, project: Project) -> Context:
@@ -203,7 +204,9 @@ async def copywriting(session: AsyncSession, job: Job) -> dict[str, Any]:
         name = "the home page" if not page["slug"] else page["title"]
         await emit(session, project.id, agent.name, "progress", f"Writing {name} ({i} of {len(pages)})")
         await session.commit()
-        done[page["slug"]] = (await agent.run_page(ctx, page)).model_dump()
+        written_page = (await agent.run_page(ctx, page)).model_dump()
+        written_page["slug"] = page["slug"]  # trust the plan, not the model's echo of it
+        done[page["slug"]] = written_page
         # Assign a new dict: SQLAlchemy only saves JSON columns when the value it holds changes.
         job.payload = {**job.payload, "pages_done": dict(done)}
         await session.commit()
@@ -223,5 +226,47 @@ async def copywriting(session: AsyncSession, job: Job) -> dict[str, Any]:
     )
     project.status = ProjectStatus.BUILDING
     await emit(session, project.id, "Producer", "status", "Copy done. The developer starts next.")
+    await queue.enqueue(session, "agent.build", project_id=project.id)
     await session.commit()
     return {"artifact": str(artifact.id)}
+
+
+@handler("agent.build")
+async def build(session: AsyncSession, job: Job) -> dict[str, Any]:
+    project = await _project(session, job)
+    if project is None:
+        return {"skipped": "project deleted"}
+    ctx = await load_context(session, project)
+    agent = Developer(get_llm())
+    await emit(session, project.id, agent.name, "progress", "Choosing a layout for every section")
+    await session.commit()
+
+    plan = await agent.plan(ctx)
+    # Render once now so a broken plan fails here, inside the retrying job, not in the preview.
+    pages = render_project(project, {**ctx.artifacts, "layout": plan.model_dump()}, lambda slug: f"/{slug}")
+    artifact = await save_artifact(session, project, "layout", agent.name, plan.model_dump())
+    size = sum(len(html) for html in pages.values()) // 1024
+    await emit(
+        session,
+        project.id,
+        agent.name,
+        "artifact",
+        f"Built {len(pages)} pages ({size} KB). The preview is ready for you.",
+        {"artifact_id": str(artifact.id), "kind": "layout"},
+    )
+    project.status = ProjectStatus.PREVIEW
+    await session.commit()
+    return {"artifact": str(artifact.id), "pages": len(pages)}
+
+
+def render_project(project: Project, artifacts: dict[str, dict], url_for) -> dict[str, str]:
+    return render_site(
+        business_name=project.business_name,
+        business_type=project.business_type,
+        city=project.city,
+        strategy=artifacts["strategy"],
+        style=artifacts["style"],
+        copy=artifacts["copy"],
+        layout=artifacts["layout"],
+        url_for=url_for,
+    )

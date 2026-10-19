@@ -85,6 +85,7 @@ export const api = {
     answers: Record<string, string>;
   }) => request<Project>("/projects", { method: "POST", body: JSON.stringify(brief) }),
   artifacts: (id: string) => request<Artifact[]>(`/projects/${id}/artifacts`),
+  previewPath: (id: string) => request<{ path: string }>(`/projects/${id}/preview`),
   decideDirection: (id: string, decision: "approve" | "revise", note?: string) =>
     request<Project>(`/projects/${id}/direction`, { method: "POST", body: JSON.stringify({ decision, note }) }),
 };

@@ -1,4 +1,5 @@
 import json
+import sys
 
 import httpx
 import pytest
@@ -92,6 +93,8 @@ def fake_llm(monkeypatch):
             out = STRATEGY
         elif "Art director" in system:
             out = STYLE
+        elif "Developer" in system:
+            out = {"pages": [{"slug": "", "blocks": ["hero_split"]}, {"slug": "menu", "blocks": ["cards"]}]}
         else:
             out = page_copy("menu")
         return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(out)}}]})
@@ -316,7 +319,7 @@ async def test_approval_gate(client, auth, user_id, session, fake_llm):
     await drain()
 
     await session.refresh(project)
-    assert project.status == ProjectStatus.BUILDING
+    assert project.status == ProjectStatus.PREVIEW
     copy = await session.scalar(select(Artifact).where(Artifact.kind == "copy"))
     assert len(copy.content["pages"]) == 3  # one per planned page
     msgs = [e.message for e in await since(session, project.id)]
@@ -343,4 +346,47 @@ async def test_copy_retry_resumes_after_finished_pages(client, auth, user_id, se
     # Home and menu were written once; only the failed page was retried.
     assert calls == ["", "menu", "visit", "visit"]
     await session.refresh(project)
-    assert project.status == ProjectStatus.BUILDING
+    assert project.status == ProjectStatus.PREVIEW
+
+
+async def test_revisions_are_capped(client, auth, user_id, session, fake_llm, monkeypatch):
+    from app.routers import projects as projects_router
+
+    monkeypatch.setattr(projects_router, "MAX_STYLE_VERSIONS", 2)
+    project = await make_project(session, user_id)
+    await drain()
+    url = f"/projects/{project.id}/direction"
+    assert (
+        await client.post(url, json={"decision": "revise", "note": "warmer please"}, headers=auth)
+    ).status_code == 200
+    await drain()
+    r = await client.post(url, json={"decision": "revise", "note": "even warmer"}, headers=auth)
+    assert r.status_code == 429
+    assert (await client.post(url, json={"decision": "approve"}, headers=auth)).status_code == 200
+
+
+async def test_preview(client, auth, user_id, session, fake_llm, monkeypatch):
+    evil = page_copy("")
+    evil["sections"][0]["heading"] = "<script>alert(1)</script>Fresh coffee"
+    monkeypatch.setattr(sys.modules[__name__], "page_copy", lambda slug: {**evil, "slug": slug})
+    project = await make_project(session, user_id)
+    await drain()
+    await client.post(f"/projects/{project.id}/direction", json={"decision": "approve"}, headers=auth)
+    await drain()
+
+    path = (await client.get(f"/projects/{project.id}/preview", headers=auth)).json()["path"]
+    r = await client.get(path)
+    assert r.status_code == 200, r.text
+    assert "text/html" in r.headers["content-type"]
+    assert "default-src 'none'" in r.headers["content-security-policy"]
+    html = r.text
+    assert "<script>" not in html and "&lt;script&gt;" in html  # copy is escaped
+    assert '<span class="ph">[opening hours]</span>' in html  # placeholders highlighted
+    assert "Fraunces" in html and "#8a3b1c" in html  # style tile applied
+    assert f"/preview/{project.id}/menu?t=" in html  # nav links keep the token
+    # Wrong or missing token, or another project's token, gets nothing.
+    assert (await client.get(f"/preview/{project.id}/")).status_code == 404
+    assert (await client.get(path.replace("t=", "t=x"))).status_code == 404
+    assert (
+        await client.get(f"/projects/{project.id}/preview", headers={"Authorization": "Bearer x"})
+    ).status_code == 401
