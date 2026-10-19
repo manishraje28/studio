@@ -226,7 +226,8 @@ async def upload_photo(
         raise HTTPException(status.HTTP_409_CONFLICT, f"Up to {MAX_PHOTOS} photos per project")
     data = await file.read(8 * 1024 * 1024 + 1)
     try:
-        name, w, h = save_upload(project_id, data)
+        # Decoding runs in a thread so a large photo cannot stall every other request.
+        name, w, h = await asyncio.to_thread(save_upload, project_id, data)
     except UploadError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     alt = (file.filename or "").rsplit(".", 1)[0].replace("_", " ").replace("-", " ")[:100]

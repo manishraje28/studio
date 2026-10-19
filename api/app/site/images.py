@@ -21,6 +21,8 @@ UPLOAD_ROOT = Path(__file__).resolve().parents[2] / "uploads"
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 MAX_PHOTOS = 12
 MAX_EDGE = 1800
+# Refuse decompression bombs before decoding (Pillow raises above this many pixels).
+Image.MAX_IMAGE_PIXELS = 40_000_000
 
 
 @dataclass
@@ -162,12 +164,14 @@ def save_upload(project_id: uuid.UUID, data: bytes) -> tuple[str, int, int]:
         img = Image.open(io.BytesIO(data))
         img.verify()  # catches truncated or fake files
         img = Image.open(io.BytesIO(data))
+    except Image.DecompressionBombError as exc:
+        raise UploadError("That photo is too large") from exc
     except (UnidentifiedImageError, OSError) as exc:
         raise UploadError("That file is not a photo we can read (use JPG, PNG or WebP)") from exc
     if img.format not in ("JPEG", "PNG", "WEBP"):
         raise UploadError("Use JPG, PNG or WebP")
-    if img.width * img.height > 60_000_000:
-        raise UploadError("That photo is too large")
+    if img.format == "JPEG":
+        img.draft("RGB", (MAX_EDGE, MAX_EDGE))  # decode JPEGs at reduced size: much less memory and CPU
     img = ImageOps.exif_transpose(img).convert("RGB")
     img.thumbnail((MAX_EDGE, MAX_EDGE))
     folder = UPLOAD_ROOT / str(project_id)
