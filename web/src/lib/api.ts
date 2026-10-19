@@ -38,6 +38,8 @@ export type Artifact = {
 
 export type Details = { details: { label: string; value: string }[]; questions: string[] };
 
+export type OwnerPhoto = { name: string; url: string; alt: string; width: number; height: number };
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -90,6 +92,25 @@ export const api = {
   details: (id: string) => request<Details>(`/projects/${id}/details`),
   saveDetails: (id: string, values: Record<string, string>) =>
     request<Details>(`/projects/${id}/details`, { method: "PUT", body: JSON.stringify({ values }) }),
+  photos: (id: string) => request<OwnerPhoto[]>(`/projects/${id}/photos`),
+  deletePhoto: (id: string, name: string) => request<OwnerPhoto[]>(`/projects/${id}/photos/${name}`, { method: "DELETE" }),
+  rebuild: (id: string) => request<Project>(`/projects/${id}/rebuild`, { method: "POST" }),
+  uploadPhoto: async (id: string, file: File): Promise<OwnerPhoto[]> => {
+    // Multipart upload: let the browser set the Content-Type boundary.
+    const body = new FormData();
+    body.append("file", file);
+    const res = await fetch(`${API_URL}/projects/${id}/photos`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${auth.get() ?? ""}` },
+      body,
+    });
+    if (!res.ok) {
+      let message = res.statusText;
+      try { message = (await res.json()).detail ?? message; } catch {}
+      throw new ApiError(res.status, String(message));
+    }
+    return res.json();
+  },
   previewPath: (id: string) => request<{ path: string }>(`/projects/${id}/preview`),
   decideDirection: (id: string, decision: "approve" | "revise", note?: string) =>
     request<Project>(`/projects/${id}/direction`, { method: "POST", body: JSON.stringify({ decision, note }) }),

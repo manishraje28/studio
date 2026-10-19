@@ -1,10 +1,19 @@
-{#- One page of a client site. Everything from the model is autoescaped; no scripts are emitted. -#}
+{#- One page of a client site. All model text is autoescaped; the page ships no JavaScript. -#}
 {%- macro ph(text) -%}{{ text | placeholders }}{%- endmacro -%}
-{%- macro paragraphs(text) -%}
-  {%- for para in text | paragraphs %}<p>{{ ph(para) }}</p>{% endfor -%}
+{%- macro paragraphs(text) -%}{%- for para in text | paragraphs %}<p>{{ ph(para) }}</p>{% endfor -%}{%- endmacro -%}
+{%- macro img(photo, cls="", eager=False) -%}
+  <img class="{{ cls }}" src="{{ photo.url }}" alt="{{ photo.alt }}" {% if not eager %}loading="lazy" {% endif %}decoding="async"{% if photo.width %} width="{{ photo.width }}" height="{{ photo.height }}"{% endif %}>
 {%- endmacro -%}
-{%- macro button(label, href, ghost=False) -%}
-  <a class="btn{% if ghost %} ghost{% endif %}" href="{{ href }}">{{ ph(label) }}</a>
+{%- macro actions(label, ghost_on_dark=False) -%}
+  <div class="actions">
+    <a class="btn" href="{{ contact.primary_href }}">{{ ph(label or site.primary_action) }}</a>
+    {%- if contact.phone %}<a class="btn {{ 'ghost-light' if ghost_on_dark else 'ghost' }}" href="tel:{{ contact.phone_digits }}">Call {{ contact.phone }}</a>{% endif %}
+  </div>
+{%- endmacro -%}
+{%- macro motif() -%}
+  <svg class="motif-svg" viewBox="0 0 400 480" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+    {%- for i in range(7) %}<path d="M-20 {{ 40 + i * 70 }} C 120 {{ i * 70 }}, 260 {{ 90 + i * 70 }}, 420 {{ 30 + i * 70 }}" fill="none" stroke="var(--accent)" stroke-width="{{ 1.2 + (i % 3) * 0.6 }}" opacity="{{ 0.18 + (i % 3) * 0.08 }}"/>{% endfor %}
+  </svg>
 {%- endmacro -%}
 <!doctype html>
 <html lang="en">
@@ -13,6 +22,9 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{ page.seo_title }}</title>
 <meta name="description" content="{{ page.meta_description }}">
+<meta property="og:title" content="{{ page.seo_title }}">
+<meta property="og:description" content="{{ page.meta_description }}">
+{%- if og_image %}<meta property="og:image" content="{{ og_image }}">{% endif %}
 <link rel="icon" href="data:image/svg+xml,{{ favicon | urlencode }}">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="{{ fonts_url }}">
@@ -21,134 +33,326 @@
   --bg:{{ p.background }};--surface:{{ p.surface }};--ink:{{ p.ink }};--muted:{{ p.muted }};
   --accent:{{ p.accent }};--accent-ink:{{ p.accent_ink }};
   --head:"{{ t.heading_font }}",Georgia,serif;--body:"{{ t.body_font }}",system-ui,sans-serif;
+  --radius:{{ look.radius }};--frame:{{ look.frame }};--hw:{{ look.heading_weight }};--track:{{ look.tracking }};
+  --line:color-mix(in srgb,var(--ink) 12%,transparent);
 }
 *{box-sizing:border-box}
-html{scroll-behavior:smooth}
-body{margin:0;background:var(--bg);color:var(--ink);font:400 17px/1.65 var(--body);-webkit-font-smoothing:antialiased}
-h1,h2,h3{font-family:var(--head);font-weight:600;letter-spacing:-.015em;line-height:1.1;margin:0 0 .5em}
-{% if t.heading_style == "italic accents" %}h1 em,h2 em{font-style:italic;font-weight:400}{% endif %}
-{% if t.heading_style == "all caps small" %}h2{text-transform:uppercase;letter-spacing:.06em;font-size:clamp(20px,2.2vw,26px)!important}{% endif %}
-{% if t.heading_style == "tight and heavy" %}h1,h2{font-weight:800;letter-spacing:-.03em}{% endif %}
-p{margin:0 0 1em;max-width:62ch}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 17px/1.7 var(--body);-webkit-font-smoothing:antialiased;overflow-x:hidden}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:50;opacity:.05;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+img{max-width:100%;height:auto;display:block}
+h1,h2,h3{font-family:var(--head);font-weight:var(--hw);letter-spacing:var(--track);line-height:1.04;margin:0 0 .45em;text-wrap:balance}
+{% if t.heading_style == "all caps small" %}h2,h3{text-transform:uppercase;letter-spacing:.08em;line-height:1.2}{% endif %}
+p{margin:0 0 1em;max-width:60ch;text-wrap:pretty}
 a{color:inherit}
-.wrap{max-width:1120px;margin:0 auto;padding:0 clamp(18px,4vw,40px)}
-.ph{background:color-mix(in srgb,var(--accent) 18%,transparent);border-radius:3px;padding:0 3px}
-header{border-bottom:1px solid color-mix(in srgb,var(--ink) 12%,transparent)}
-header .wrap{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:68px;flex-wrap:wrap}
-.brand{font:600 21px var(--head);text-decoration:none}
-nav{display:flex;gap:22px;flex-wrap:wrap;font-size:15px}
-nav a{text-decoration:none;color:var(--muted)}
-nav a[aria-current]{color:var(--ink);font-weight:600}
-.btn{display:inline-block;padding:13px 20px;border-radius:6px;background:var(--accent);color:var(--accent-ink);font-weight:600;font-size:15px;text-decoration:none;border:1.5px solid var(--accent)}
-.btn.ghost{background:transparent;color:var(--ink);border-color:color-mix(in srgb,var(--ink) 30%,transparent)}
-section{padding:clamp(56px,8vw,96px) 0}
-section+section{border-top:1px solid color-mix(in srgb,var(--ink) 9%,transparent)}
-.kicker{font:600 12px var(--body);letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin-bottom:14px}
-.hero h1{font-size:clamp(38px,6vw,72px)}
-.hero .lead{font-size:clamp(17px,1.6vw,20px);color:var(--muted)}
-.hero.split .wrap{display:grid;grid-template-columns:1.25fr 1fr;gap:clamp(28px,5vw,64px);align-items:center}
-.motif{aspect-ratio:4/5;border-radius:10px;background:var(--surface);position:relative;overflow:hidden;border:1px solid color-mix(in srgb,var(--ink) 10%,transparent)}
-.motif svg{position:absolute;inset:0;width:100%;height:100%}
-.motif span{position:absolute;left:20px;bottom:18px;right:20px;font:italic 400 clamp(18px,2vw,24px) var(--head);color:var(--ink)}
-.hero.center{text-align:center}.hero.center p{margin-left:auto;margin-right:auto}
-.actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:28px}
-.hero.center .actions{justify-content:center}
-h2{font-size:clamp(28px,3.6vw,44px)}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:16px;margin-top:28px}
-.card{background:var(--surface);border:1px solid color-mix(in srgb,var(--ink) 10%,transparent);border-radius:10px;padding:22px}
-.card p{margin:0}
-ol.steps{list-style:none;padding:0;margin:28px 0 0;display:grid;gap:14px;counter-reset:s}
-ol.steps li{counter-increment:s;display:grid;grid-template-columns:44px 1fr;gap:14px;align-items:start}
-ol.steps li::before{content:counter(s);font:600 20px var(--head);width:44px;height:44px;border-radius:50%;display:grid;place-items:center;background:var(--accent);color:var(--accent-ink)}
-ul.list{padding-left:20px;margin:16px 0 0}ul.list li{margin:6px 0}
+.wrap{max-width:1200px;margin:0 auto;padding:0 clamp(20px,4.5vw,48px)}
+.ph{background:color-mix(in srgb,var(--accent) 20%,transparent);border-radius:3px;padding:0 4px}
+.kicker{display:inline-flex;align-items:center;gap:10px;font:600 12px/1 var(--body);letter-spacing:.16em;text-transform:uppercase;color:var(--accent);margin-bottom:18px}
+.kicker::before{content:"";width:28px;height:1.5px;background:currentColor}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:14px 22px;border-radius:min(var(--radius),8px);background:var(--accent);color:var(--accent-ink);font:600 15px/1 var(--body);text-decoration:none;border:1.5px solid var(--accent);transition:transform .2s,box-shadow .2s}
+.btn:hover{transform:translateY(-2px);box-shadow:0 10px 24px -12px var(--accent)}
+.btn.ghost{background:transparent;color:var(--ink);border-color:color-mix(in srgb,var(--ink) 28%,transparent)}
+.btn.ghost-light{background:transparent;color:#fff;border-color:rgba(255,255,255,.6)}
+.actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:30px}
+/* header */
+.top{position:sticky;top:0;z-index:40;background:color-mix(in srgb,var(--bg) 86%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.top .wrap{display:flex;align-items:center;gap:24px;min-height:72px}
+.brand{font:var(--hw) 22px/1.1 var(--head);letter-spacing:var(--track);text-decoration:none;margin-right:auto}
+.top nav{display:flex;gap:26px;font-size:15px;overflow-x:auto;scrollbar-width:none}
+.top nav a{text-decoration:none;color:var(--muted);white-space:nowrap;padding:6px 0;border-bottom:1.5px solid transparent}
+.top nav a[aria-current]{color:var(--ink);border-color:var(--accent)}
+.top .btn{padding:11px 16px;font-size:14px}
+section{padding:clamp(72px,10vw,128px) 0;position:relative}
+h2{font-size:clamp(32px,4.4vw,56px)}
+.lead{font-size:clamp(18px,1.6vw,21px);color:var(--muted)}
+/* heroes */
+.hero-image{min-height:min(88vh,820px);display:flex;align-items:flex-end;padding:0;color:#fff;overflow:hidden}
+.hero-image>img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scale(1.04);animation:settle 1.6s cubic-bezier(.2,.7,.2,1) both}
+.hero-image::after{content:"";position:absolute;inset:0;background:linear-gradient(to top,rgba(10,8,6,.86) 0%,rgba(10,8,6,.62) 40%,rgba(10,8,6,.28) 72%,rgba(10,8,6,.18) 100%)}
+.hero-image h1,.hero-image .lead,.hero-image .kicker{text-shadow:0 2px 24px rgba(0,0,0,.35)}
+.hero-image .wrap{position:relative;z-index:1;padding-bottom:clamp(48px,8vw,96px);width:100%}
+.hero-image h1{font-size:clamp(44px,7.4vw,104px);max-width:14ch;color:#fff}
+.hero-image .lead{color:rgba(255,255,255,.86)}
+.hero-image .kicker{color:#fff}
+.hero-split .wrap{display:grid;grid-template-columns:1.1fr 1fr;gap:clamp(36px,6vw,88px);align-items:center}
+.hero-split h1,.hero-editorial h1{font-size:clamp(42px,6.2vw,88px)}
+.framed{position:relative}
+.framed img,.framed .motif{width:100%;aspect-ratio:4/5;object-fit:cover;border-radius:var(--radius);position:relative;z-index:1}
+.framed::before{content:"";position:absolute;inset:0;transform:translate(var(--frame),var(--frame));border:1.5px solid var(--accent);border-radius:var(--radius)}
+.motif{background:var(--surface);overflow:hidden;display:block}
+.motif-svg{width:100%;height:100%}
+.tag{position:absolute;z-index:2;left:-18px;bottom:28px;background:var(--bg);border:1px solid var(--line);border-radius:min(var(--radius),10px);padding:12px 16px;font:500 14px/1.3 var(--body);box-shadow:0 18px 40px -24px rgba(0,0,0,.45)}
+.tag b{display:block;font:var(--hw) 18px/1.2 var(--head)}
+.hero-editorial h1{max-width:16ch}
+.hero-editorial .row{display:grid;grid-template-columns:1fr 1fr 1.1fr;gap:clamp(16px,2.4vw,28px);align-items:end;margin-top:clamp(28px,4vw,48px)}
+.hero-editorial .row img{border-radius:var(--radius);object-fit:cover;width:100%}
+.hero-editorial .row img:first-child{aspect-ratio:3/4}.hero-editorial .row img:nth-child(2){aspect-ratio:1;margin-bottom:12%}
+/* story rows */
+.story .wrap{display:grid;grid-template-columns:1fr 1fr;gap:clamp(36px,6vw,96px);align-items:center}
+.story.flip .wrap>:first-child{order:2}
+.story .framed img,.story .framed .motif{aspect-ratio:5/4}
+/* services */
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,230px),1fr));gap:clamp(16px,2vw,24px);margin-top:40px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;display:flex;flex-direction:column;transition:transform .3s,box-shadow .3s}
+.card:hover{transform:translateY(-4px);box-shadow:0 24px 48px -32px rgba(0,0,0,.4)}
+.card img{aspect-ratio:4/3;object-fit:cover;width:100%}
+.card .in{padding:24px}
+.card h3{font-size:22px;margin-bottom:.35em}
+.card p{margin:0;color:var(--muted);font-size:15.5px}
+.card .num{font:var(--hw) 40px/1 var(--head);color:var(--accent);opacity:.9;margin-bottom:14px}
+.price{display:inline-block;margin-top:14px;font-weight:700;color:var(--accent)}
+/* price list */
+.prices{margin-top:36px;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:4px 64px}
+.prices div{display:flex;align-items:baseline;gap:12px;padding:16px 0;border-bottom:1px dashed var(--line)}
+.prices span:first-child{font-weight:600}
+.prices i{flex:1;border-bottom:1.5px dotted color-mix(in srgb,var(--ink) 30%,transparent);transform:translateY(-4px)}
+.prices span:last-child{font:var(--hw) 20px/1 var(--head);color:var(--accent);white-space:nowrap}
+/* gallery */
+.gallery{display:grid;grid-auto-flow:dense;grid-template-columns:repeat(3,1fr);grid-auto-rows:clamp(160px,18vw,260px);gap:clamp(10px,1.4vw,16px);margin-top:40px}
+.gallery img{width:100%;height:100%;object-fit:cover;border-radius:var(--radius)}
+.gallery img:first-child{grid-row:span 2;grid-column:span 2}
+.gallery img:nth-child(6){grid-column:span 2}
+/* quote band */
 .band{background:var(--accent);color:var(--accent-ink)}
-.band h2{color:var(--accent-ink)}
+.band h2{color:var(--accent-ink);font-size:clamp(34px,5.2vw,72px);max-width:20ch}
+.band p{color:color-mix(in srgb,var(--accent-ink) 82%,transparent)}
 .band .btn{background:var(--accent-ink);color:var(--accent);border-color:var(--accent-ink)}
-.band .wrap{display:flex;justify-content:space-between;align-items:center;gap:24px;flex-wrap:wrap}
-dl.contact{display:grid;grid-template-columns:max-content 1fr;gap:10px 24px;margin:24px 0 0}
-dl.contact dt{font-weight:600}dl.contact dd{margin:0;color:var(--muted)}
-.two{display:grid;grid-template-columns:1fr 1.4fr;gap:clamp(24px,5vw,64px)}
-footer{padding:36px 0 48px;color:var(--muted);font-size:14px;border-top:1px solid color-mix(in srgb,var(--ink) 12%,transparent)}
-footer .wrap{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
-@media(max-width:760px){.hero.split .wrap,.two{grid-template-columns:1fr}.motif{aspect-ratio:16/9}dl.contact{grid-template-columns:1fr}}
-@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+.band .ghost{color:var(--accent-ink);border-color:color-mix(in srgb,var(--accent-ink) 55%,transparent);background:transparent}
+.band.cta .wrap{display:flex;justify-content:space-between;align-items:flex-end;gap:32px;flex-wrap:wrap}
+.band.cta h2{font-size:clamp(30px,4vw,52px)}
+/* steps */
+ol.steps{list-style:none;padding:0;margin:44px 0 0;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:28px;counter-reset:s}
+ol.steps li{counter-increment:s;border-top:1.5px solid var(--ink);padding-top:22px}
+ol.steps li::before{content:"0" counter(s);display:block;font:var(--hw) 44px/1 var(--head);color:var(--accent);margin-bottom:14px}
+/* faq */
+.faq{max-width:860px}
+.faq details{border-bottom:1px solid var(--line);padding:22px 0}
+.faq summary{cursor:pointer;list-style:none;display:flex;justify-content:space-between;gap:20px;font:var(--hw) clamp(19px,1.8vw,23px)/1.3 var(--head)}
+.faq summary::after{content:"+";font:300 28px/1 var(--body);color:var(--accent);transition:transform .25s}
+.faq details[open] summary::after{transform:rotate(45deg)}
+.faq details p{margin:12px 0 0;color:var(--muted)}
+/* contact */
+.contact .wrap{display:grid;grid-template-columns:1fr 1.05fr;gap:clamp(36px,6vw,88px)}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:clamp(24px,3vw,36px)}
+dl.info{display:grid;grid-template-columns:max-content 1fr;gap:14px 28px;margin:0}
+dl.info dt{font-weight:600}dl.info dd{margin:0;color:var(--muted)}
+.ways{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:26px}
+.ways a{display:flex;flex-direction:column;gap:4px;padding:16px;border:1px solid var(--line);border-radius:min(var(--radius),10px);text-decoration:none;background:var(--bg);transition:border-color .2s}
+.ways a:hover{border-color:var(--accent)}
+.ways small{color:var(--muted);font-size:13px}.ways b{font-size:15.5px}
+.text .wrap{display:grid;grid-template-columns:.9fr 1.3fr;gap:clamp(28px,6vw,96px)}
+/* footer */
+footer{background:var(--ink);color:color-mix(in srgb,var(--bg) 78%,transparent);padding:clamp(56px,7vw,88px) 0 36px;font-size:15px}
+footer .cols{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:40px}
+footer .brand{color:var(--bg);font-size:28px}
+footer a{color:inherit;text-decoration:none}footer a:hover{color:var(--bg)}
+footer ul{list-style:none;padding:0;margin:0;display:grid;gap:8px}
+footer h4{font:600 12px var(--body);letter-spacing:.14em;text-transform:uppercase;color:var(--bg);margin:0 0 14px}
+.credits{margin-top:44px;padding-top:22px;border-top:1px solid rgba(255,255,255,.12);font-size:12.5px}
+.credits summary{cursor:pointer}
+.credits li{margin:4px 0}
+/* motion */
+@keyframes settle{from{transform:scale(1.12)}to{transform:scale(1.04)}}
+@keyframes rise{from{opacity:0;transform:translateY(28px)}to{opacity:1;transform:none}}
+.hero-image .wrap>*,.hero-split .wrap>div:first-child>*,.hero-editorial .wrap>*{animation:rise .9s cubic-bezier(.2,.7,.2,1) both}
+.hero-image .wrap>:nth-child(2),.hero-split .wrap>div:first-child>:nth-child(2){animation-delay:.08s}
+.hero-image .wrap>:nth-child(3),.hero-split .wrap>div:first-child>:nth-child(3){animation-delay:.16s}
+@supports (animation-timeline:view()){
+  .reveal{animation:rise linear both;animation-timeline:view();animation-range:entry 0% cover 22%}
+}
+@media(max-width:860px){
+  .hero-split .wrap,.story .wrap,.contact .wrap,.text .wrap{grid-template-columns:1fr}
+  .story.flip .wrap>:first-child{order:0}
+  .gallery{grid-template-columns:1fr 1fr}.gallery img:first-child{grid-column:span 2;grid-row:span 1}.gallery img:nth-child(6){grid-column:auto}
+  .hero-editorial .row{grid-template-columns:1fr 1fr}.hero-editorial .row img:nth-child(3){display:none}
+  .tag{left:12px}
+  footer .cols{grid-template-columns:1fr}
+  .top .btn{display:none}
+  .top .wrap{flex-wrap:wrap;gap:4px 16px;padding-top:12px;padding-bottom:6px;min-height:0}
+  .brand{font-size:19px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+  .top nav{width:100%;gap:20px;padding-bottom:4px}
+}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}html{scroll-behavior:auto}}
 </style>
 </head>
 <body>
-<header><div class="wrap">
+<header class="top"><div class="wrap">
   <a class="brand" href="{{ url('') }}">{{ site.business_name }}</a>
   <nav aria-label="Main">
-    {%- for p_ in site.pages %}
-    <a href="{{ url(p_.slug) }}"{% if p_.slug == page.slug %} aria-current="page"{% endif %}>{{ p_.nav_label }}</a>
-    {%- endfor %}
+    {%- for p_ in site.pages %}<a href="{{ url(p_.slug) }}"{% if p_.slug == page.slug %} aria-current="page"{% endif %}>{{ p_.nav_label }}</a>{% endfor %}
   </nav>
+  <a class="btn" href="{{ contact.primary_href }}">{{ site.primary_action }}</a>
 </div></header>
 <main>
 {%- for b in blocks %}
 {%- set s = b.section %}
-{%- if b.layout in ("hero_split", "hero_center") %}
-<section class="hero {{ 'split' if b.layout == 'hero_split' else 'center' }}"><div class="wrap">
+{%- set flip = loop.index is even %}
+
+{%- if b.layout == "hero_image" %}
+<section class="hero-image">
+  {{ img(b.photos[0], eager=True) }}
+  <div class="wrap">
+    <div class="kicker">{{ site.business_type }}{% if site.city %} · {{ site.city }}{% endif %}</div>
+    <h1>{{ ph(s.heading) }}</h1>
+    <div class="lead">{{ paragraphs(s.body) }}</div>
+    {{ actions(s.cta_label, ghost_on_dark=True) }}
+  </div>
+</section>
+
+{%- elif b.layout == "hero_split" %}
+<section class="hero-split"><div class="wrap">
   <div>
     <div class="kicker">{{ site.business_type }}{% if site.city %} · {{ site.city }}{% endif %}</div>
     <h1>{{ ph(s.heading) }}</h1>
     <div class="lead">{{ paragraphs(s.body) }}</div>
-    <div class="actions">{{ button(s.cta_label or site.primary_action, cta_href) }}</div>
+    {{ actions(s.cta_label) }}
   </div>
-  {%- if b.layout == "hero_split" %}
-  <div class="motif" aria-hidden="true">
-    <svg viewBox="0 0 400 500" preserveAspectRatio="xMidYMid slice">
-      {%- for i in range(9) %}<circle cx="{{ 60 + (i % 3) * 140 }}" cy="{{ 80 + (i // 3) * 150 }}" r="{{ 34 + (i % 2) * 18 }}" fill="var(--accent)" opacity="{{ 0.10 + (i % 3) * 0.07 }}"/>{% endfor %}
-      <path d="M0 420 Q200 360 400 430 L400 500 L0 500Z" fill="var(--accent)" opacity=".18"/>
-    </svg>
-    {%- if site.signature %}<span>{{ site.signature }}</span>{% endif %}
+  <div class="framed">
+    {%- if b.photos %}{{ img(b.photos[0], eager=True) }}{% else %}<div class="motif">{{ motif() }}</div>{% endif %}
+    {%- if site.signature %}<div class="tag"><b>{{ site.signature }}</b>{% if site.city %}{{ site.city }}{% endif %}</div>{% endif %}
   </div>
-  {%- endif %}
 </div></section>
-{%- elif b.layout == "text" %}
-<section><div class="wrap two">
-  <h2>{{ ph(s.heading) }}</h2>
-  <div>{{ paragraphs(s.body) }}{% if s.cta_label %}<div class="actions">{{ button(s.cta_label, cta_href, True) }}</div>{% endif %}</div>
+
+{%- elif b.layout == "hero_editorial" %}
+<section class="hero-editorial"><div class="wrap">
+  <div class="kicker">{{ site.business_type }}{% if site.city %} · {{ site.city }}{% endif %}</div>
+  <h1>{{ ph(s.heading) }}</h1>
+  <div class="row">
+    {%- for ph_ in b.photos[:2] %}{{ img(ph_, eager=True) }}{% endfor %}
+    <div><div class="lead">{{ paragraphs(s.body) }}</div>{{ actions(s.cta_label) }}</div>
+  </div>
 </div></section>
-{%- elif b.layout in ("cards", "list") %}
-{%- set items = s.body | items %}
+
+{%- elif b.layout == "story" %}
+<section class="story{{ ' flip' if flip }}"><div class="wrap">
+  <div class="framed reveal">{% if b.photos %}{{ img(b.photos[0]) }}{% else %}<div class="motif">{{ motif() }}</div>{% endif %}</div>
+  <div class="reveal">
+    {% set lbl = s.section | label %}{% if lbl %}<div class="kicker">{{ lbl }}</div>{% endif %}
+    <h2>{{ ph(s.heading) }}</h2>
+    {{ paragraphs(s.body) }}
+    {%- if s.cta_label %}<div class="actions"><a class="btn ghost" href="{{ contact.primary_href }}">{{ ph(s.cta_label) }}</a></div>{% endif %}
+  </div>
+</div></section>
+
+{%- elif b.layout in ("services", "cards") %}
+{%- set it = s.body | items %}
 <section><div class="wrap">
-  <h2>{{ ph(s.heading) }}</h2>
-  {%- if items.lead %}<p>{{ ph(items.lead) }}</p>{% endif %}
-  {%- if b.layout == "cards" %}
-  <div class="grid">{% for it in items.entries %}<div class="card"><p>{{ ph(it) }}</p></div>{% endfor %}</div>
-  {%- else %}
-  <ul class="list">{% for it in items.entries %}<li>{{ ph(it) }}</li>{% endfor %}</ul>
-  {%- endif %}
-  {%- if s.cta_label %}<div class="actions">{{ button(s.cta_label, cta_href) }}</div>{% endif %}
+  <div class="reveal">{% set lbl = s.section | label %}{% if lbl %}<div class="kicker">{{ lbl }}</div>{% endif %}<h2>{{ ph(s.heading) }}</h2>{% if it.lead %}<p class="lead">{{ ph(it.lead) }}</p>{% endif %}</div>
+  <div class="grid">
+    {%- for e in it.entries %}
+    {%- set parts = e | split_item %}
+    <article class="card reveal">
+      {%- if b.photos[loop.index0] is defined %}{{ img(b.photos[loop.index0]) }}{% endif %}
+      <div class="in">
+        {%- if b.photos[loop.index0] is not defined %}<div class="num">{{ "%02d" | format(loop.index) }}</div>{% endif %}
+        {%- if parts.title %}<h3>{{ ph(parts.title) }}</h3>{% endif %}
+        {%- if parts.text %}<p>{{ ph(parts.text) }}</p>{% endif %}
+        {%- if parts.price %}<span class="price">{{ ph(parts.price) }}</span>{% endif %}
+      </div>
+    </article>
+    {%- endfor %}
+  </div>
+  {%- if s.cta_label %}<div class="actions"><a class="btn" href="{{ contact.primary_href }}">{{ ph(s.cta_label) }}</a></div>{% endif %}
 </div></section>
-{%- elif b.layout == "steps" %}
-{%- set items = s.body | items %}
+
+{%- elif b.layout == "price_list" %}
+{%- set it = s.body | items %}
 <section><div class="wrap">
-  <h2>{{ ph(s.heading) }}</h2>
-  {%- if items.lead %}<p>{{ ph(items.lead) }}</p>{% endif %}
-  <ol class="steps">{% for it in items.entries %}<li><p>{{ ph(it) }}</p></li>{% endfor %}</ol>
-  {%- if s.cta_label %}<div class="actions">{{ button(s.cta_label, cta_href) }}</div>{% endif %}
+  <div class="reveal">{% set lbl = s.section | label %}{% if lbl %}<div class="kicker">{{ lbl }}</div>{% endif %}<h2>{{ ph(s.heading) }}</h2>{% if it.lead %}<p class="lead">{{ ph(it.lead) }}</p>{% endif %}</div>
+  <div class="prices reveal">
+    {%- for e in it.entries %}{% set parts = e | split_item %}<div><span>{{ ph(parts.title or parts.text) }}</span><i></i><span>{{ ph(parts.price or "[price]") }}</span></div>{% endfor %}
+  </div>
 </div></section>
+
+{%- elif b.layout == "gallery" %}
+<section><div class="wrap">
+  <div class="reveal">{% set lbl = s.section | label %}{% if lbl %}<div class="kicker">{{ lbl }}</div>{% endif %}<h2>{{ ph(s.heading) }}</h2>{{ paragraphs(s.body) }}</div>
+  {%- if b.photos %}<div class="gallery">{% for ph_ in b.photos %}{{ img(ph_) }}{% endfor %}</div>{% endif %}
+</div></section>
+
+{%- elif b.layout == "quote_band" %}
+<section class="band"><div class="wrap reveal">
+  <h2>{{ ph(s.heading) }}</h2>
+  {{ paragraphs(s.body) }}
+</div></section>
+
 {%- elif b.layout == "cta_band" %}
-<section class="band"><div class="wrap">
+<section class="band cta"><div class="wrap reveal">
   <div><h2>{{ ph(s.heading) }}</h2>{{ paragraphs(s.body) }}</div>
-  {{ button(s.cta_label or site.primary_action, cta_href) }}
+  {{ actions(s.cta_label) }}
 </div></section>
+
+{%- elif b.layout == "steps" %}
+{%- set it = s.body | items %}
+<section><div class="wrap">
+  <div class="reveal">{% set lbl = s.section | label %}{% if lbl %}<div class="kicker">{{ lbl }}</div>{% endif %}<h2>{{ ph(s.heading) }}</h2>{% if it.lead %}<p class="lead">{{ ph(it.lead) }}</p>{% endif %}</div>
+  <ol class="steps">{% for e in it.entries %}<li class="reveal"><p>{{ ph(e) }}</p></li>{% endfor %}</ol>
+  {%- if s.cta_label %}<div class="actions"><a class="btn" href="{{ contact.primary_href }}">{{ ph(s.cta_label) }}</a></div>{% endif %}
+</div></section>
+
+{%- elif b.layout == "faq" %}
+<section><div class="wrap">
+  <div class="reveal">{% set lbl = s.section | label %}{% if lbl %}<div class="kicker">{{ lbl }}</div>{% endif %}<h2>{{ ph(s.heading) }}</h2></div>
+  <div class="faq">
+    {%- for q in s.body | faq %}<details class="reveal"{% if loop.first %} open{% endif %}><summary>{{ ph(q.q) }}</summary>{% if q.a %}<p>{{ ph(q.a) }}</p>{% endif %}</details>{% endfor %}
+  </div>
+</div></section>
+
 {%- elif b.layout == "contact" %}
 {%- set c = s.body | contact %}
-<section id="contact"><div class="wrap two">
-  <div><h2>{{ ph(s.heading) }}</h2>{% for para in c.text %}<p>{{ ph(para) }}</p>{% endfor %}</div>
-  <div>
-    {%- if c.pairs %}<dl class="contact">{% for k, v in c.pairs %}<dt>{{ k }}</dt><dd>{{ ph(v) }}</dd>{% endfor %}</dl>{% endif %}
-    {%- if s.cta_label %}<div class="actions">{{ button(s.cta_label, cta_href) }}</div>{% endif %}
+<section class="contact" id="contact"><div class="wrap">
+  <div class="reveal">
+    {% set lbl = s.section | label %}{% if lbl %}<div class="kicker">{{ lbl }}</div>{% endif %}
+    <h2>{{ ph(s.heading) }}</h2>
+    {%- for para in c.text %}<p>{{ ph(para) }}</p>{% endfor %}
+    <div class="ways">
+      {%- if contact.phone %}<a href="tel:{{ contact.phone_digits }}"><small>Call</small><b>{{ contact.phone }}</b></a>{% endif %}
+      {%- if contact.whatsapp %}<a href="{{ contact.whatsapp }}"><small>WhatsApp</small><b>Send a message</b></a>{% endif %}
+      {%- if contact.email %}<a href="mailto:{{ contact.email }}"><small>Email</small><b>{{ contact.email }}</b></a>{% endif %}
+      {%- if contact.maps %}<a href="{{ contact.maps }}" target="_blank" rel="noopener"><small>Directions</small><b>Open in Maps</b></a>{% endif %}
+    </div>
   </div>
+  <div class="panel reveal">
+    <dl class="info">
+      {%- for k, v in c.pairs %}<dt>{{ k }}</dt><dd>{{ ph(v) }}</dd>{% endfor %}
+      {%- if not c.pairs %}
+        {%- if contact.address %}<dt>Address</dt><dd>{{ contact.address }}</dd>{% endif %}
+        {%- if contact.hours %}<dt>Hours</dt><dd>{{ contact.hours }}</dd>{% endif %}
+      {%- endif %}
+    </dl>
+    {%- if s.cta_label %}<div class="actions"><a class="btn" href="{{ contact.primary_href }}">{{ ph(s.cta_label) }}</a></div>{% endif %}
+  </div>
+</div></section>
+
+{%- else %}
+<section class="text"><div class="wrap reveal">
+  <div>{% set lbl = s.section | label %}{% if lbl %}<div class="kicker">{{ lbl }}</div>{% endif %}<h2>{{ ph(s.heading) }}</h2></div>
+  <div>{{ paragraphs(s.body) }}{% if s.cta_label %}<div class="actions"><a class="btn ghost" href="{{ contact.primary_href }}">{{ ph(s.cta_label) }}</a></div>{% endif %}</div>
 </div></section>
 {%- endif %}
 {%- endfor %}
 </main>
 <footer><div class="wrap">
-  <span>© {{ year }} {{ site.business_name }}</span>
-  <span>{{ site.business_type }}{% if site.city %}, {{ site.city }}{% endif %}</span>
+  <div class="cols">
+    <div>
+      <a class="brand" href="{{ url('') }}">{{ site.business_name }}</a>
+      <p style="margin-top:14px">{{ site.business_type }}{% if site.city %} in {{ site.city }}{% endif %}.</p>
+      {%- if contact.address %}<p>{{ contact.address }}</p>{% endif %}
+    </div>
+    <div><h4>Pages</h4><ul>{% for p_ in site.pages %}<li><a href="{{ url(p_.slug) }}">{{ p_.nav_label }}</a></li>{% endfor %}</ul></div>
+    <div><h4>Visit</h4><ul>
+      {%- if contact.hours %}<li>{{ contact.hours }}</li>{% endif %}
+      {%- if contact.phone %}<li><a href="tel:{{ contact.phone_digits }}">{{ contact.phone }}</a></li>{% endif %}
+      {%- if contact.email %}<li><a href="mailto:{{ contact.email }}">{{ contact.email }}</a></li>{% endif %}
+      {%- if contact.social %}<li>{{ contact.social }}</li>{% endif %}
+    </ul></div>
+  </div>
+  <div class="credits">
+    © {{ year }} {{ site.business_name }}
+    {%- if credits %}
+    <details><summary>Photo credits</summary><ul>{% for c_ in credits %}<li>{{ c_ }}</li>{% endfor %}</ul></details>
+    {%- endif %}
+  </div>
 </div></footer>
 </body>
 </html>

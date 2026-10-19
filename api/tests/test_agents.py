@@ -95,6 +95,8 @@ def fake_llm(monkeypatch):
             out = STRATEGY
         elif "Art director" in system:
             out = STYLE
+        elif "Photo researcher" in system:
+            out = {"queries": ["coffee cup", "cafe interior", "bookshelf"]}
         elif "QA critic" in system:
             out = {
                 "specificity": 7,
@@ -121,6 +123,16 @@ def fake_llm(monkeypatch):
         daily_call_limit=100,
     )
     monkeypatch.setattr(pipeline, "get_llm", lambda: client)
+
+    async def fake_stock(queries):
+        from app.site.images import Photo
+
+        return [
+            Photo(url=f"https://img.test/{i}.jpg", alt=q, credit=f"Photo {i} by Someone, CC BY 2.0", source="openverse")
+            for i, q in enumerate(queries)
+        ]
+
+    monkeypatch.setattr(pipeline, "search_stock", fake_stock)
     return requests
 
 
@@ -443,3 +455,53 @@ async def test_owner_fills_details(client, auth, user_id, session, fake_llm):
     assert "[opening hours]" not in html
     other = {"Authorization": f"Bearer {make_token(uuid.uuid4())}"}
     assert (await client.get(url, headers=other)).status_code == 404
+
+
+def png_bytes(w=1200, h=800, fmt="PNG") -> bytes:
+    import io as _io
+
+    from PIL import Image
+
+    buf = _io.BytesIO()
+    Image.new("RGB", (w, h), (200, 120, 80)).save(buf, fmt)
+    return buf.getvalue()
+
+
+async def built_project(client, auth, session, user_id):
+    project = await make_project(session, user_id)
+    await drain()
+    await client.post(f"/projects/{project.id}/direction", json={"decision": "approve"}, headers=auth)
+    await drain()
+    return project
+
+
+async def test_photos_upload_preview_and_rebuild(client, auth, user_id, session, fake_llm):
+    project = await built_project(client, auth, session, user_id)
+    base = f"/projects/{project.id}/photos"
+
+    bad = await client.post(base, files={"file": ("x.jpg", b"not an image", "image/jpeg")}, headers=auth)
+    assert bad.status_code == 422
+    r = await client.post(base, files={"file": ("shop_front.png", png_bytes(3000, 2000), "image/png")}, headers=auth)
+    assert r.status_code == 201
+    photo = r.json()[0]
+    assert photo["alt"] == "shop front" and photo["width"] <= 1800  # resized
+
+    # The media URL needs the signed token.
+    assert (await client.get(photo["url"])).status_code == 200
+    assert (await client.get(photo["url"].split("?")[0])).status_code == 404
+
+    path = (await client.get(f"/projects/{project.id}/preview", headers=auth)).json()["path"]
+    html = (await client.get(path)).text
+    assert photo["url"].replace("&", "&amp;") in html or photo["url"] in html  # owner photo used first
+    stock = await session.scalar(select(Artifact).where(Artifact.project_id == project.id, Artifact.kind == "stock"))
+    assert len(stock.content["photos"]) == 3 and stock.content["queries"][0] == "coffee cup"
+
+    r = await client.post(f"/projects/{project.id}/rebuild", headers=auth)
+    assert r.json()["status"] == "building"
+    await drain()
+    await session.refresh(project)
+    assert project.status == ProjectStatus.PREVIEW
+
+    assert (await client.delete(f"{base}/{photo['name']}", headers=auth)).json() == []
+    other = {"Authorization": f"Bearer {make_token(uuid.uuid4())}"}
+    assert (await client.get(base, headers=other)).status_code == 404

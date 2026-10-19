@@ -52,8 +52,9 @@ class PageLayout(BaseModel):
     @field_validator("blocks")
     @classmethod
     def known_layouts(cls, v: list[str]) -> list[str]:
-        from app.site.render import LAYOUTS
+        from app.site.render import LAYOUTS, LEGACY
 
+        v = [LEGACY.get(b, b) for b in v]  # older names still mean something sensible
         if bad := [b for b in v if b not in LAYOUTS]:
             raise ValueError(f"unknown layouts {bad}; use only {LAYOUTS}")
         return v
@@ -89,3 +90,18 @@ class CopyReview(BaseModel):
     specificity: int = Field(ge=0, le=10, description="10 = could only be this business; 0 = could be any business")
     summary: str = Field(description="Two sentences for the owner")
     generic_lines: list[GenericLine] = Field(max_length=6)
+
+
+PEOPLE_WORDS = {"woman", "women", "man", "men", "person", "people", "girl", "boy", "model", "face", "bride", "customer"}
+
+
+class PhotoQueries(BaseModel):
+    queries: list[str] = Field(min_length=3, max_length=6)
+
+    @field_validator("queries")
+    @classmethod
+    def no_people(cls, v: list[str]) -> list[str]:
+        clean = [q.strip()[:60] for q in v if q.strip()]
+        if bad := [q for q in clean if set(q.lower().split()) & PEOPLE_WORDS]:
+            raise ValueError(f"no people in photo searches: {bad}")
+        return clean

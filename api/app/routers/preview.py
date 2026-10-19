@@ -11,7 +11,7 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.pipeline import load_context, render_project
@@ -19,6 +19,7 @@ from app.auth import User
 from app.config import get_settings
 from app.db import get_session
 from app.models import Project
+from app.site.images import upload_path
 
 router = APIRouter(tags=["preview"])
 Session = Annotated[AsyncSession, Depends(get_session)]
@@ -36,11 +37,15 @@ def preview_path(project_id: uuid.UUID, slug: str) -> str:
     return f"/preview/{project_id}/{slug}?t={preview_token(project_id)}"
 
 
+def media_path(project_id: uuid.UUID, name: str) -> str:
+    return f"/media/{project_id}/{name}?t={preview_token(project_id)}"
+
+
 def csp() -> str:
     ancestors = " ".join(get_settings().cors_origins)
     return (
         "default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; "
-        "font-src https://fonts.gstatic.com; img-src data:; base-uri 'none'; form-action 'none'; "
+        "font-src https://fonts.gstatic.com; img-src 'self' https: data:; base-uri 'none'; form-action 'none'; "
         f"frame-ancestors 'self' {ancestors}"
     )
 
@@ -68,7 +73,9 @@ async def preview_page(project_id: uuid.UUID, slug: str, session: Session, t: An
     ctx = await load_context(session, project)
     if not {"strategy", "style", "copy", "layout"} <= ctx.artifacts.keys():
         raise HTTPException(404, "The preview is not ready yet")
-    pages = render_project(project, ctx.artifacts, lambda s: preview_path(project_id, s))
+    pages = render_project(
+        project, ctx.artifacts, lambda s: preview_path(project_id, s), lambda name: media_path(project_id, name)
+    )
     html = pages.get(slug.strip("/"))
     if html is None:
         raise HTTPException(404, "No such page")
@@ -80,4 +87,19 @@ async def preview_page(project_id: uuid.UUID, slug: str, session: Session, t: An
             "Referrer-Policy": "no-referrer",
             "Cache-Control": "no-store",
         },
+    )
+
+
+@router.get("/media/{project_id}/{name}")
+async def media(project_id: uuid.UUID, name: str, t: Annotated[str, Query()] = ""):
+    """The owner's uploaded photos, readable with the same signed token as the preview."""
+    if not hmac.compare_digest(t, preview_token(project_id)):
+        raise HTTPException(404, "Not found")
+    path = upload_path(project_id, name)
+    if path is None:
+        raise HTTPException(404, "Not found")
+    return FileResponse(
+        path,
+        media_type="image/jpeg",
+        headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "private, max-age=86400"},
     )

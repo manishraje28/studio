@@ -10,13 +10,14 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import queue
-from app.agents.team import ArtDirector, Context, Copywriter, Critic, Developer, Researcher, Strategist
+from app.agents.team import ArtDirector, Context, Copywriter, Critic, Developer, PhotoScout, Researcher, Strategist
 from app.events import emit
 from app.llm import get_llm
 from app.models import Artifact, Brief, Job, Project, ProjectStatus
 from app.registry import handler
 from app.site import qa
 from app.site.details import fill
+from app.site.images import search_stock
 from app.site.render import render_site
 
 
@@ -241,11 +242,28 @@ async def build(session: AsyncSession, job: Job) -> dict[str, Any]:
     if project is None:
         return {"skipped": "project deleted"}
     ctx = await load_context(session, project)
+    if not ctx.artifacts.get("stock", {}).get("photos"):
+        scout = PhotoScout(get_llm())
+        await emit(session, project.id, scout.name, "progress", "Looking for free photos of the space and the work")
+        await session.commit()
+        queries = (await scout.queries(ctx)).queries
+        found = await search_stock(queries)
+        ctx.artifacts["stock"] = {"queries": queries, "photos": [p.to_dict() for p in found]}
+        await save_artifact(session, project, "stock", scout.name, ctx.artifacts["stock"])
+        await emit(
+            session,
+            project.id,
+            scout.name,
+            "progress",
+            f"Found {len(found)} free photos (credited in the footer). Your own uploads always come first.",
+        )
+        await session.commit()
+
     agent = Developer(get_llm())
     await emit(session, project.id, agent.name, "progress", "Choosing a layout for every section")
     await session.commit()
 
-    plan = await agent.plan(ctx)
+    plan = await agent.plan(ctx, photo_count=len(photo_pool(project, ctx.artifacts, lambda n: n)))
     # Render once now so a broken plan fails here, inside the retrying job, not in the preview.
     pages = render_project(project, {**ctx.artifacts, "layout": plan.model_dump()}, lambda slug: f"/{slug}")
     artifact = await save_artifact(session, project, "layout", agent.name, plan.model_dump())
@@ -264,16 +282,36 @@ async def build(session: AsyncSession, job: Job) -> dict[str, Any]:
     return {"artifact": str(artifact.id), "pages": len(pages)}
 
 
-def render_project(project: Project, artifacts: dict[str, dict], url_for) -> dict[str, str]:
+def photo_pool(project: Project, artifacts: dict[str, dict], media_url) -> list[dict]:
+    """Owner photos first (newest upload last), then credited stock photos."""
+    own = [
+        {
+            "url": media_url(p["name"]),
+            "alt": p.get("alt") or project.business_name,
+            "credit": None,
+            "width": p.get("width", 0),
+            "height": p.get("height", 0),
+        }
+        for p in artifacts.get("photos", {}).get("items", [])
+    ]
+    return own + artifacts.get("stock", {}).get("photos", [])
+
+
+def render_project(
+    project: Project, artifacts: dict[str, dict], url_for, media_url=lambda name: name
+) -> dict[str, str]:
+    values = artifacts.get("details", {}).get("values", {})
     return render_site(
         business_name=project.business_name,
         business_type=project.business_type,
         city=project.city,
         strategy=artifacts["strategy"],
         style=artifacts["style"],
-        copy=fill(artifacts["copy"], artifacts.get("details", {}).get("values", {})),
+        copy=fill(artifacts["copy"], values),
         layout=artifacts["layout"],
         url_for=url_for,
+        photos=photo_pool(project, artifacts, media_url),
+        details=values,
     )
 
 

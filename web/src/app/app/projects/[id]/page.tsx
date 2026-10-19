@@ -8,6 +8,7 @@ import { STAGES, STATUS_LABEL, stageIndex } from "@/components/app/status";
 import { CopyView, QAView, ResearchView, StrategyView, StyleView } from "@/components/app/ArtifactViews";
 import ApprovalPanel from "@/components/app/ApprovalPanel";
 import DetailsPanel from "@/components/app/DetailsPanel";
+import PhotosPanel from "@/components/app/PhotosPanel";
 
 const TAB_LABEL: Record<string, string> = { research: "Research file", strategy: "Strategy", style: "Style tile", copy: "Copy", layout: "Preview", qa: "QA report" };
 const TAB_ORDER = ["layout", "qa", "research", "strategy", "style", "copy"];
@@ -90,6 +91,15 @@ export default function ProjectPage() {
       {(project.status === "preview" || project.status === "live") && (
         <div className="mt-8">
           <DetailsPanel projectId={project.id} onSaved={() => { setPreviewKey((k) => k + 1); setTab("layout"); }} />
+        </div>
+      )}
+      {(project.status === "preview" || project.status === "live") && (
+        <div className="mt-6">
+          <PhotosPanel
+            projectId={project.id}
+            onChanged={() => setPreviewKey((k) => k + 1)}
+            onRebuild={(p) => setProject(p)}
+          />
         </div>
       )}
 

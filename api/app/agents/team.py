@@ -10,11 +10,10 @@ from typing import Any
 
 from app.agents.copywriting import PageCopy
 from app.agents.design import StyleTile
-from app.agents.schemas import CopyReview, LayoutPlan, ResearchDossier, Strategy
+from app.agents.schemas import CopyReview, LayoutPlan, PhotoQueries, ResearchDossier, Strategy
 from app.agents.webfetch import FetchError, Page, fetch_page
 from app.llm import LLMClient
 from app.models import Project
-from app.site.render import LAYOUTS
 
 log = logging.getLogger("studio.agents")
 
@@ -35,21 +34,31 @@ DESIGN_RULES = """Design rules:
 - No emoji as icons, no stock photos of people, no fake customer logos or counters.
 - Restraint: one or two strong ideas, not many effects. Motion is subtle."""
 
-LAYOUT_GUIDE = """- hero_split: big heading, intro and button, with a decorative panel beside it. Best first section.
-- hero_center: centred big heading and button. A calmer first section.
-- text: heading on the left, paragraphs on the right. Stories and explanations.
-- cards: heading and a grid of short items. Services, products, reasons.
-- list: heading and a bullet list. Practical details, what to bring.
-- steps: numbered steps. How to order, book or get started.
-- cta_band: full-width coloured band with a button. Closing push to the main action.
-- contact: contact details as label and value pairs. Address, phone, hours."""
-assert set(LAYOUTS) >= {"hero_split", "hero_center", "text", "cards", "list", "steps", "cta_band", "contact"}
+LAYOUT_GUIDE = """Openers (first section of a page):
+- hero_image: full-screen photo with the heading over it. The most striking opener. Needs a photo.
+- hero_split: heading and intro beside a framed photo. Warm and personal.
+- hero_editorial: very large heading with a small photo collage under it. Magazine feel. Needs 2 photos.
+Content:
+- story: photo beside a heading and paragraphs; alternates sides down the page. About, philosophy, the space.
+- services: cards for services or products, with photos when there are enough. Use when the body is a list.
+- price_list: menu or price list with dotted leaders. Use when items have prices.
+- gallery: grid of photos with a short heading. Needs 3 or more photos.
+- steps: numbered steps. How to book, order or get started.
+- faq: questions that open and close. Use when the body is questions and answers.
+- text: heading beside paragraphs. Plain explanations.
+Bands:
+- quote_band: one strong statement on the accent colour. Use once, for the most memorable line.
+- cta_band: closing push to the main action, on the accent colour. Last section of a page.
+- contact: call, WhatsApp, email and map buttons plus address and hours. Contact or visit sections."""
 
 COPY_RULES = """Copy rules:
 - Write like the owner talking to a regular customer: short sentences, concrete nouns, no hype.
 - Headings say something specific about this business. No generic lines like "Welcome to our website".
 - Never write testimonials, ratings, years in business or numbers that are not in the brief or research.
 - Search titles under 60 characters, meta descriptions under 160.
+- Lists of services, products or prices: one item per line starting with "- ", written as
+  "Name: one short sentence" and the price at the end if known, else [price].
+- Questions and answers: each question on its own line ending with "?", the answer on the next line.
 - Placeholders in [square brackets] are only for short facts the owner can type: phone number, address,
   opening hours, prices, WhatsApp number. Never write placeholders for photos, images, maps or videos;
   describe the section in words instead. Reuse the same wording for the same fact, e.g. always [phone number]."""
@@ -203,7 +212,7 @@ class Developer:
     def __init__(self, llm: LLMClient):
         self.llm = llm
 
-    async def plan(self, ctx: Context) -> LayoutPlan:
+    async def plan(self, ctx: Context, photo_count: int = 0) -> LayoutPlan:
         pages = [
             {
                 "slug": p["slug"],
@@ -220,10 +229,13 @@ class Developer:
             for p in ctx.artifacts["copy"]["pages"]
         ]
         prompt = (
-            f"Layouts you can use:\n{LAYOUT_GUIDE}\n\nPages and their sections, in order:\n"
+            f"Layouts you can use:\n{LAYOUT_GUIDE}\n\nPhotos available for this site: {photo_count}.\n\n"
+            "Pages and their sections, in order:\n"
             f"{json.dumps(pages, ensure_ascii=False, indent=1)}\n\n"
             "Choose one layout per section, in the same order, for every page. The first section of each page "
-            "is usually a hero. Vary layouts so pages do not feel repetitive. Use cta_band at most once per page."
+            "is an opener. Vary layouts so pages do not feel repetitive: avoid the same layout twice in a row. "
+            "Use quote_band and cta_band at most once per page. With 4 or more photos, prefer hero_image on the "
+            "home page and include one gallery or story section."
         )
         plan = await self.llm.complete_json(
             LayoutPlan,
@@ -266,4 +278,29 @@ class Critic:
             project_id=ctx.project.id,
             agent=self.name,
             temperature=0.2,
+        )
+
+
+class PhotoScout:
+    """Picks stock photo searches for places, products and details. Never people."""
+
+    name = "Photo researcher"
+
+    def __init__(self, llm: LLMClient):
+        self.llm = llm
+
+    async def queries(self, ctx: Context) -> PhotoQueries:
+        research = ctx.artifacts.get("research", {})
+        prompt = (
+            f"{ctx.brief_block()}\n\nWhat customers value: {research.get('what_customers_value', [])}\n\n"
+            "Suggest search terms for free stock photos for this website: the kind of space, the products or "
+            "services up close, tools and materials, textures. Two to four plain words each, in English."
+        )
+        return await self.llm.complete_json(
+            PhotoQueries,
+            [{"role": "user", "content": prompt}],
+            system=f"You are the Photo researcher. Never suggest photos of people, faces or crowds.\n{GROUND_RULES}",
+            project_id=ctx.project.id,
+            agent=self.name,
+            temperature=0.5,
         )

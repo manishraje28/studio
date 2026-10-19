@@ -3,7 +3,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
@@ -16,10 +16,12 @@ from app.events import emit
 from app.models import Artifact, Brief, Project, ProjectStatus
 from app.schemas import ArtifactOut, BriefIn, DetailOut, DetailsIn, DetailsOut, DirectionDecision, EventOut, ProjectOut
 from app.site.details import find_placeholders
+from app.site.images import MAX_PHOTOS, UploadError, delete_upload, save_upload
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 # Each revision costs model calls from the shared free quota.
 MAX_STYLE_VERSIONS = 5
+MAX_BUILDS = 8
 Session = Annotated[AsyncSession, Depends(get_session)]
 
 
@@ -191,3 +193,83 @@ async def save_details(project_id: uuid.UUID, body: DetailsIn, user: User, sessi
     await emit(session, project.id, "Owner", "status", f"Filled in {filled} of {len(known)} details.")
     await session.commit()
     return await get_details(project_id, user, session)
+
+
+async def _photos(session: AsyncSession, project_id: uuid.UUID) -> list[dict]:
+    art = await _latest(session, project_id, "photos")
+    return list(art.content.get("items", [])) if art else []
+
+
+def _photo_out(project_id: uuid.UUID, items: list[dict]) -> list[dict]:
+    from app.routers.preview import media_path
+
+    return [{**p, "url": media_path(project_id, p["name"])} for p in items]
+
+
+@router.get("/{project_id}/photos")
+async def list_photos(project_id: uuid.UUID, user: User, session: Session) -> list[dict]:
+    await owned_project(session, project_id, user.id)
+    return _photo_out(project_id, await _photos(session, project_id))
+
+
+@router.post("/{project_id}/photos", status_code=status.HTTP_201_CREATED)
+async def upload_photo(
+    project_id: uuid.UUID, user: User, session: Session, file: Annotated[UploadFile, File()]
+) -> list[dict]:
+    """Add one of the owner's photos. Resized, re-encoded as JPEG and stripped of metadata."""
+    from app.agents.pipeline import save_artifact
+
+    project = await owned_project(session, project_id, user.id)
+    await session.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(f"photos:{project_id}", 0))))
+    items = await _photos(session, project_id)
+    if len(items) >= MAX_PHOTOS:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Up to {MAX_PHOTOS} photos per project")
+    data = await file.read(8 * 1024 * 1024 + 1)
+    try:
+        name, w, h = save_upload(project_id, data)
+    except UploadError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+    alt = (file.filename or "").rsplit(".", 1)[0].replace("_", " ").replace("-", " ")[:100]
+    items.append({"name": name, "width": w, "height": h, "alt": alt or project.business_name})
+    await save_artifact(session, project, "photos", "Owner", {"items": items})
+    await emit(session, project.id, "Owner", "status", f"Added a photo ({len(items)} in total).")
+    await session.commit()
+    return _photo_out(project_id, items)
+
+
+@router.delete("/{project_id}/photos/{name}")
+async def remove_photo(project_id: uuid.UUID, name: str, user: User, session: Session) -> list[dict]:
+    from app.agents.pipeline import save_artifact
+
+    project = await owned_project(session, project_id, user.id)
+    await session.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(f"photos:{project_id}", 0))))
+    items = await _photos(session, project_id)
+    keep = [p for p in items if p["name"] != name]
+    if len(keep) == len(items):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such photo")
+    await save_artifact(session, project, "photos", "Owner", {"items": keep})
+    await session.commit()
+    delete_upload(project_id, name)
+    return _photo_out(project_id, keep)
+
+
+@router.post("/{project_id}/rebuild", response_model=ProjectOut)
+async def rebuild(project_id: uuid.UUID, user: User, session: Session) -> Project:
+    """Ask the developer to lay the site out again, e.g. after adding photos."""
+    await owned_project(session, project_id, user.id)
+    project = await session.scalar(
+        select(Project).where(Project.id == project_id).with_for_update().execution_options(populate_existing=True)
+    )
+    if project.status not in (ProjectStatus.PREVIEW, ProjectStatus.LIVE):
+        raise HTTPException(status.HTTP_409_CONFLICT, "The site is still being made")
+    builds = await session.scalar(
+        select(func.count()).select_from(Artifact).where(Artifact.project_id == project_id, Artifact.kind == "layout")
+    )
+    if builds >= MAX_BUILDS:
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, f"This demo allows {MAX_BUILDS} rebuilds per project")
+    project.status = ProjectStatus.BUILDING
+    await emit(session, project.id, "Owner", "status", "Asked the developer to rebuild the pages.")
+    await queue.enqueue(session, "agent.build", project_id=project.id)
+    await session.commit()
+    await session.refresh(project)
+    return project
