@@ -325,8 +325,9 @@ async def publish_site(project_id: uuid.UUID, user: User, session: Session) -> P
     )
     if project.status not in READY:
         raise HTTPException(status.HTTP_409_CONFLICT, "The site is not ready yet")
+    # Count every attempt, finished or failed, like revisions, so failures cannot bypass the cap.
     publishes = await session.scalar(
-        select(func.count()).select_from(Artifact).where(Artifact.project_id == project_id, Artifact.kind == "publish")
+        select(func.count()).select_from(Job).where(Job.project_id == project_id, Job.kind == "agent.publish")
     )
     inflight = await session.scalar(
         select(func.count())
