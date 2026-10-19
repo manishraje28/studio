@@ -22,16 +22,16 @@ class Settings(BaseSettings):
 
     # AI providers. All are OpenAI-compatible and free-tier friendly. They are tried in
     # llm_chain order; providers without an API key are skipped (ollama needs none).
-    llm_chain: list[str] = ["gemini", "groq", "openrouter"]
+    llm_chain: list[str] = ["groq", "gemini", "openrouter"]
     gemini_api_key: str | None = None
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-flash-latest"
     groq_api_key: str | None = None
-    groq_model: str = "llama-3.3-70b-versatile"
+    groq_model: str = "openai/gpt-oss-120b"
     openrouter_api_key: str | None = None
-    openrouter_model: str = "meta-llama/llama-3.3-70b-instruct:free"
+    openrouter_model: str = "google/gemma-4-31b-it:free"
     ollama_base_url: str = "http://localhost:11434/v1"
     ollama_model: str = "llama3.2"
-    llm_timeout_seconds: float = 90
+    llm_timeout_seconds: float = 45
     # Hard stop on total model calls per UTC day, so a public demo cannot drain free quotas.
     llm_daily_call_limit: int = 400
 

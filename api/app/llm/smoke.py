@@ -15,6 +15,7 @@ class Tagline(BaseModel):
 
 
 async def main(prompt: str) -> None:
+    sys.stdout.reconfigure(encoding="utf-8")  # Windows consoles default to cp1252
     await migrate()
     llm = get_llm()
     print("chain:", [f"{p.name}:{p.model}" for p in llm.providers] or "none configured")
