@@ -38,6 +38,9 @@ RLS_STATEMENTS = [
 async def migrate(db: AsyncEngine = engine) -> None:
     async with db.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # create_all never changes an existing enum type; add values introduced after the first deploy.
+        for value in [s.value for s in models.ProjectStatus]:
+            await conn.execute(text(f"alter type project_status add value if not exists '{value}'"))
         has_auth = await conn.scalar(text("select exists (select 1 from pg_namespace where nspname = 'auth')"))
         if has_auth:
             for stmt in RLS_STATEMENTS:

@@ -4,7 +4,7 @@ export const DEV_LOGIN = process.env.NEXT_PUBLIC_DEV_LOGIN === "true";
 const TOKEN_KEY = "studio.token";
 
 export type ProjectStatus =
-  | "briefed" | "researching" | "strategy" | "design" | "awaiting_approval"
+  | "briefed" | "researching" | "strategy" | "design" | "awaiting_approval" | "copy"
   | "building" | "qa" | "preview" | "live" | "failed";
 
 export type Project = {
@@ -85,6 +85,8 @@ export const api = {
     answers: Record<string, string>;
   }) => request<Project>("/projects", { method: "POST", body: JSON.stringify(brief) }),
   artifacts: (id: string) => request<Artifact[]>(`/projects/${id}/artifacts`),
+  decideDirection: (id: string, decision: "approve" | "revise", note?: string) =>
+    request<Project>(`/projects/${id}/direction`, { method: "POST", body: JSON.stringify({ decision, note }) }),
 };
 
 /**

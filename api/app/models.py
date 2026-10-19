@@ -20,6 +20,7 @@ class ProjectStatus(enum.StrEnum):
     STRATEGY = "strategy"
     DESIGN = "design"
     AWAITING_APPROVAL = "awaiting_approval"
+    COPY = "copy"
     BUILDING = "building"
     QA = "qa"
     PREVIEW = "preview"

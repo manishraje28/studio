@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import queue
-from app.agents.team import Context, Researcher, Strategist
+from app.agents.team import ArtDirector, Context, Copywriter, Researcher, Strategist
 from app.events import emit
 from app.llm import get_llm
 from app.models import Artifact, Brief, Job, Project, ProjectStatus
@@ -140,5 +140,88 @@ async def strategy(session: AsyncSession, job: Job) -> dict[str, Any]:
     )
     project.status = ProjectStatus.DESIGN
     await emit(session, project.id, "Producer", "status", "Strategy done. The art director starts next.")
+    await queue.enqueue(session, "agent.art", project_id=project.id)
+    await session.commit()
+    return {"artifact": str(artifact.id)}
+
+
+@handler("agent.art")
+async def art_direction(session: AsyncSession, job: Job) -> dict[str, Any]:
+    project = await _project(session, job)
+    if project is None:
+        return {"skipped": "project deleted"}
+    ctx = await load_context(session, project)
+    feedback = job.payload.get("feedback")
+    agent = ArtDirector(get_llm())
+    await emit(
+        session,
+        project.id,
+        agent.name,
+        "progress",
+        "Revising the direction with your notes" if feedback else "Choosing colours, type and the signature idea",
+    )
+    await session.commit()
+
+    tile = await agent.run(ctx, feedback)
+    artifact = await save_artifact(session, project, "style", agent.name, tile.model_dump())
+    ideas = "; ".join(i.name for i in tile.signature_ideas)
+    await emit(
+        session,
+        project.id,
+        agent.name,
+        "artifact",
+        f"Style tile v{artifact.version} ready. {tile.typography.heading_font} with {tile.typography.body_font}. "
+        f"Signature: {ideas}.",
+        {"artifact_id": str(artifact.id), "kind": "style"},
+    )
+    project.status = ProjectStatus.AWAITING_APPROVAL
+    await emit(
+        session,
+        project.id,
+        "Producer",
+        "status",
+        "The visual direction needs your approval before anything is written or built.",
+    )
+    await session.commit()
+    return {"artifact": str(artifact.id)}
+
+
+@handler("agent.copy")
+async def copywriting(session: AsyncSession, job: Job) -> dict[str, Any]:
+    project = await _project(session, job)
+    if project is None:
+        return {"skipped": "project deleted"}
+    ctx = await load_context(session, project)
+    agent = Copywriter(get_llm())
+    pages = ctx.artifacts["strategy"]["pages"]
+    # One call per page keeps prompts small enough for free-tier models and shows progress.
+    # Finished pages are saved on the job as we go, so a retry resumes instead of starting over.
+    done: dict[str, dict] = dict(job.payload.get("pages_done", {}))
+    for i, page in enumerate(pages, 1):
+        if page["slug"] in done:
+            continue
+        name = "the home page" if not page["slug"] else page["title"]
+        await emit(session, project.id, agent.name, "progress", f"Writing {name} ({i} of {len(pages)})")
+        await session.commit()
+        done[page["slug"]] = (await agent.run_page(ctx, page)).model_dump()
+        # Assign a new dict: SQLAlchemy only saves JSON columns when the value it holds changes.
+        job.payload = {**job.payload, "pages_done": dict(done)}
+        await session.commit()
+    written = [done[p["slug"]] for p in pages]
+
+    artifact = await save_artifact(session, project, "copy", agent.name, {"pages": written})
+    words = sum(len(f"{s['heading']} {s['body']}".split()) for p in written for s in p["sections"])
+    placeholders = sum(f"{s['heading']} {s['body']}".count("[") for p in written for s in p["sections"])
+    await emit(
+        session,
+        project.id,
+        agent.name,
+        "artifact",
+        f"Copy ready for {len(written)} pages, about {words} words."
+        + (f" {placeholders} details are marked [like this] for you to fill in." if placeholders else ""),
+        {"artifact_id": str(artifact.id), "kind": "copy"},
+    )
+    project.status = ProjectStatus.BUILDING
+    await emit(session, project.id, "Producer", "status", "Copy done. The developer starts next.")
     await session.commit()
     return {"artifact": str(artifact.id)}

@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, StringConstraints, field_validator
 
@@ -64,3 +64,8 @@ class ArtifactOut(BaseModel):
     agent: str
     content: dict[str, Any]
     created_at: datetime
+
+
+class DirectionDecision(BaseModel):
+    decision: Literal["approve", "revise"]
+    note: str | None = Field(default=None, max_length=1000, description="What to change, required for revise")

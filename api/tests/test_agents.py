@@ -36,6 +36,47 @@ STRATEGY = {
 }
 
 
+STYLE = {
+    "mood": "Calm and bookish, like a corner table on a slow Sunday.",
+    "palette": {
+        "background": "#f6efe3",
+        "surface": "#fbf7f0",
+        "ink": "#2b1d14",
+        "muted": "#6b5847",
+        "accent": "#8a3b1c",
+        "accent_ink": "#fff8ef",
+    },
+    "typography": {
+        "heading_font": "Fraunces",
+        "body_font": "Inter Tight",
+        "heading_style": "italic accents",
+        "why": "Bookish serif with a plain body face.",
+    },
+    "signature_ideas": [
+        {"name": "Menu as a library card", "description": "Menu set on a lined card", "why_it_fits": "reading corner"}
+    ],
+    "imagery": "The owner's own photos of the coffee and the shelves.",
+    "layout_notes": ["Generous margins", "One column on phones"],
+    "avoid": ["stock photos", "neon colours"],
+}
+
+
+def page_copy(slug: str) -> dict:
+    return {
+        "slug": slug,
+        "seo_title": "Kaapi House, filter coffee in Pune",
+        "meta_description": "Filter coffee and a reading corner in Pune.",
+        "sections": [
+            {
+                "section": "Hero",
+                "heading": "Filter coffee, slowly",
+                "body": "Open [opening hours].",
+                "cta_label": "Reserve a table",
+            }
+        ],
+    }
+
+
 @pytest.fixture
 def fake_llm(monkeypatch):
     """Answers with RESEARCH or STRATEGY depending on which agent is asking; records request bodies."""
@@ -44,7 +85,15 @@ def fake_llm(monkeypatch):
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         requests.append(body)
-        out = RESEARCH if "Researcher" in body["messages"][0]["content"] else STRATEGY
+        system = body["messages"][0]["content"]
+        if "Researcher" in system:
+            out = RESEARCH
+        elif "Strategist" in system:
+            out = STRATEGY
+        elif "Art director" in system:
+            out = STYLE
+        else:
+            out = page_copy("menu")
         return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(out)}}]})
 
     client = LLMClient(
@@ -83,14 +132,16 @@ async def test_full_pipeline(session, user_id, fake_llm):
     await drain()
 
     await session.refresh(project)
-    assert project.status == ProjectStatus.DESIGN
+    assert project.status == ProjectStatus.AWAITING_APPROVAL
     arts = {a.kind: a for a in await session.scalars(select(Artifact).where(Artifact.project_id == project.id))}
-    assert set(arts) == {"research", "strategy"}
+    assert set(arts) == {"research", "strategy", "style"}
     assert arts["strategy"].content["primary_action"]["label"] == "Reserve a table"
     agents = [e.agent for e in await since(session, project.id)]
     assert agents[0] == "Producer" and "Researcher" in agents and "Strategist" in agents
     # The strategist sees the research file, and the brief is wrapped as data.
-    strategy_prompt = fake_llm[-1]["messages"][-1]["content"]
+    strategy_prompt = next(b for b in fake_llm if "Strategist" in b["messages"][0]["content"])["messages"][-1][
+        "content"
+    ]
     assert "<research>" in strategy_prompt and "filter coffee" in strategy_prompt and "<brief>" in strategy_prompt
 
 
@@ -103,7 +154,7 @@ async def test_unreachable_website_does_not_stop_research(session, user_id, fake
     await drain()
 
     await session.refresh(project)
-    assert project.status == ProjectStatus.DESIGN
+    assert project.status == ProjectStatus.AWAITING_APPROVAL
     msgs = [e.message for e in await since(session, project.id)]
     assert any("Could not read the website (HTTP 500)" in m for m in msgs)
 
@@ -126,7 +177,7 @@ async def test_artifacts_endpoint(client, auth, user_id, session, fake_llm):
     project = await make_project(session, user_id)
     await drain()
     r = await client.get(f"/projects/{project.id}/artifacts", headers=auth)
-    assert r.status_code == 200 and sorted(a["kind"] for a in r.json()) == ["research", "strategy"]
+    assert r.status_code == 200 and sorted(a["kind"] for a in r.json()) == ["research", "strategy", "style"]
 
 
 async def test_dev_token_signs_in(client):
@@ -234,3 +285,62 @@ async def test_fetch_refuses_compressed_and_slow_pages(monkeypatch):
     monkeypatch.setattr(wf, "TOTAL_DEADLINE", 0.2)
     with pytest.raises(FetchError, match="longer than"):
         await fetch_page("https://slow.example/", httpx.AsyncClient(transport=httpx.MockTransport(slow)))
+
+
+async def test_approval_gate(client, auth, user_id, session, fake_llm):
+    project = await make_project(session, user_id)
+    url = f"/projects/{project.id}/direction"
+    # Nothing to approve yet.
+    assert (await client.post(url, json={"decision": "approve"}, headers=auth)).status_code == 409
+    await drain()
+
+    # Revise needs a real note, then re-runs the art director with it.
+    assert (await client.post(url, json={"decision": "revise", "note": ""}, headers=auth)).status_code == 422
+    r = await client.post(url, json={"decision": "revise", "note": "Warmer, less brown please"}, headers=auth)
+    assert r.json()["status"] == "design"
+    await drain()
+    art_prompt = [b for b in fake_llm if "Art director" in b["messages"][0]["content"]][-1]["messages"][-1]["content"]
+    assert "<owner_feedback>Warmer, less brown please</owner_feedback>" in art_prompt
+    styles = list(await session.scalars(select(Artifact).where(Artifact.kind == "style")))
+    assert sorted(a.version for a in styles) == [1, 2]
+
+    # Strangers cannot approve.
+    from tests.conftest import make_token
+
+    other = {"Authorization": f"Bearer {make_token()}"}
+    assert (await client.post(url, json={"decision": "approve"}, headers=other)).status_code == 404
+
+    r = await client.post(url, json={"decision": "approve"}, headers=auth)
+    assert r.json()["status"] == "copy"
+    assert (await client.post(url, json={"decision": "approve"}, headers=auth)).status_code == 409  # only once
+    await drain()
+
+    await session.refresh(project)
+    assert project.status == ProjectStatus.BUILDING
+    copy = await session.scalar(select(Artifact).where(Artifact.kind == "copy"))
+    assert len(copy.content["pages"]) == 3  # one per planned page
+    msgs = [e.message for e in await since(session, project.id)]
+    assert any("Writing Menu (2 of 3)" in m for m in msgs)
+    assert any("marked [like this]" in m for m in msgs)
+
+
+async def test_copy_retry_resumes_after_finished_pages(client, auth, user_id, session, fake_llm, monkeypatch):
+    project = await make_project(session, user_id)
+    await drain()
+    await client.post(f"/projects/{project.id}/direction", json={"decision": "approve"}, headers=auth)
+
+    real = pipeline.Copywriter.run_page
+    calls = []
+
+    async def flaky(self, ctx, page):
+        calls.append(page["slug"])
+        if page["slug"] == "visit" and calls.count("visit") == 1:
+            raise RuntimeError("rate limited")
+        return await real(self, ctx, page)
+
+    monkeypatch.setattr(pipeline.Copywriter, "run_page", flaky)
+    await drain(skip_backoff=True)
+    # Home and menu were written once; only the failed page was retried.
+    assert calls == ["", "menu", "visit", "visit"]
+    await session.refresh(project)
+    assert project.status == ProjectStatus.BUILDING

@@ -63,6 +63,7 @@ class LLMClient:
         *,
         daily_call_limit: int,
         attempts_per_provider: int = 3,
+        rate_limit_attempts: int = 6,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ):
         self.providers = providers
@@ -70,6 +71,8 @@ class LLMClient:
         self.http = http
         self.daily_call_limit = daily_call_limit
         self.attempts_per_provider = attempts_per_provider
+        # Free tiers return 429 often and recover within seconds, so they get more patience.
+        self.rate_limit_attempts = rate_limit_attempts
         self.sleep = sleep
 
     async def calls_today(self) -> int:
@@ -105,7 +108,10 @@ class LLMClient:
             if json_mode:
                 body["response_format"] = {"type": "json_object"}
 
-            for attempt in range(1, self.attempts_per_provider + 1):
+            attempt = 0
+            rate_limited = 0
+            while True:
+                attempt += 1
                 await provider.wait_turn()
                 started = time.monotonic()
                 status: int | None = None
@@ -145,8 +151,13 @@ class LLMClient:
                 # Auth errors, bad model names and the like will not fix themselves: next provider.
                 if status is not None and status not in RETRYABLE:
                     break
-                if attempt < self.attempts_per_provider:
-                    await self.sleep(min(retry_after or 2**attempt, 20))
+                if status == 429:
+                    rate_limited += 1
+                    if rate_limited >= self.rate_limit_attempts:
+                        break
+                elif attempt - rate_limited >= self.attempts_per_provider:
+                    break
+                await self.sleep(min(retry_after or 2 ** min(attempt, 4), 20))
 
         raise AllProvidersFailed("; ".join(errors))
 

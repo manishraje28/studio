@@ -1,3 +1,7 @@
+"use client";
+
+import { useEffect } from "react";
+
 type Fact = { claim: string; source: "brief" | "website" | "general knowledge" };
 type Research = {
   summary: string;
@@ -101,6 +105,140 @@ export function StrategyView({ content }: { content: Record<string, unknown> }) 
       <Block title="Search terms">
         <div className="flex flex-wrap gap-2">{s.seo_keywords.map((k) => <span key={k} className="chip !text-[12px] !normal-case">{k}</span>)}</div>
       </Block>
+    </div>
+  );
+}
+
+type Style = {
+  mood: string;
+  palette: Record<"background" | "surface" | "ink" | "muted" | "accent" | "accent_ink", string>;
+  typography: { heading_font: string; body_font: string; heading_style: string; why: string };
+  signature_ideas: { name: string; description: string; why_it_fits: string }[];
+  imagery: string;
+  layout_notes: string[];
+  avoid: string[];
+};
+
+/** Loads the chosen Google Fonts once so the style tile shows real type, not a fallback. */
+function useGoogleFonts(families: string[]) {
+  const key = families.join("|");
+  useEffect(() => {
+    const href = `https://fonts.googleapis.com/css2?${key
+      .split("|")
+      .map((f) => `family=${encodeURIComponent(f).replace(/%20/g, "+")}:ital,wght@0,400;0,600;1,400`)
+      .join("&")}&display=swap`;
+    if (document.querySelector(`link[href="${href}"]`)) return;
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = href;
+    document.head.appendChild(link);
+  }, [key]);
+}
+
+export function StyleView({ content, businessName, actionLabel }: { content: Record<string, unknown>; businessName: string; actionLabel?: string }) {
+  const s = content as Style;
+  const p = s.palette;
+  useGoogleFonts([s.typography.heading_font, s.typography.body_font]);
+  const heading = { fontFamily: `"${s.typography.heading_font}", Georgia, serif` };
+  const body = { fontFamily: `"${s.typography.body_font}", system-ui, sans-serif` };
+
+  return (
+    <div className="flex flex-col gap-6">
+      {/* a small page in the proposed style */}
+      <div className="overflow-hidden rounded-lg border border-[var(--line)]" style={{ background: p.background, color: p.ink, ...body }}>
+        <div className="flex items-center justify-between px-5 py-3 text-[13px]" style={{ borderBottom: `1px solid ${p.surface}` }}>
+          <b style={heading}>{businessName}</b>
+          <span style={{ color: p.muted }}>Menu · Visit · About</span>
+        </div>
+        <div className="px-5 py-8">
+          <div className="text-[clamp(26px,3.4vw,38px)] leading-[1.08]" style={{ ...heading, fontStyle: s.typography.heading_style === "italic accents" ? "italic" : undefined }}>
+            {businessName}
+          </div>
+          <p className="mt-3 max-w-[420px] text-[14.5px]" style={{ color: p.muted }}>{s.mood}</p>
+          <span className="mt-5 inline-block rounded-[5px] px-4 py-2 text-[14px] font-semibold" style={{ background: p.accent, color: p.accent_ink }}>
+            {actionLabel ?? "Get in touch"}
+          </span>
+          <div className="mt-6 grid grid-cols-3 gap-2">
+            {[0, 1, 2].map((i) => <div key={i} className="h-14 rounded" style={{ background: p.surface }} />)}
+          </div>
+        </div>
+      </div>
+
+      <Block title="Palette">
+        <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+          {Object.entries(p).map(([role, hex]) => (
+            <div key={role}>
+              <div className="h-12 rounded-md border border-black/10" style={{ background: hex }} />
+              <div className="mt-1 text-[12px] font-semibold">{role.replace("_", " ")}</div>
+              <code className="font-mono text-[11px] text-[var(--muted)]">{hex}</code>
+            </div>
+          ))}
+        </div>
+        <p className="mt-2 text-sm text-[var(--muted)]">Every text colour passes WCAG contrast checks against its background.</p>
+      </Block>
+      <Block title="Type">
+        <div className="text-[28px] leading-tight" style={heading}>{s.typography.heading_font}</div>
+        <div className="mt-1 text-[16px]" style={body}>{s.typography.body_font} for body text. {s.typography.why}</div>
+      </Block>
+      <Block title="Signature idea">
+        {s.signature_ideas.map((i) => (
+          <div key={i.name} className="mb-3 last:mb-0">
+            <b>{i.name}</b>
+            <p className="text-[15px]">{i.description}</p>
+            <p className="text-sm text-[var(--muted)]">From the research: {i.why_it_fits}</p>
+          </div>
+        ))}
+      </Block>
+      <div className="grid gap-6 sm:grid-cols-2">
+        <Block title="Layout"><List items={s.layout_notes} /></Block>
+        <Block title="This design avoids"><List items={s.avoid} /></Block>
+      </div>
+      <Block title="Photos"><p className="text-[15px]">{s.imagery}</p></Block>
+    </div>
+  );
+}
+
+type Copy = { pages: { slug: string; seo_title: string; meta_description: string; sections: { section: string; heading: string; body: string; cta_label: string | null }[] }[] };
+
+/** Square-bracket placeholders are details the owner still has to give us; make them stand out. */
+function Placeholders({ text }: { text: string }) {
+  return (
+    <>
+      {text.split(/(\[[^\]]+\])/g).map((part, i) =>
+        part.startsWith("[") ? (
+          <mark key={i} className="rounded-[3px] bg-[color-mix(in_srgb,var(--r3)_45%,transparent)] px-1 text-[var(--ink)]">{part}</mark>
+        ) : (
+          part
+        ),
+      )}
+    </>
+  );
+}
+
+export function CopyView({ content }: { content: Record<string, unknown> }) {
+  const c = content as Copy;
+  return (
+    <div className="flex flex-col gap-8">
+      <p className="text-sm text-[var(--muted)]">Highlighted text in [brackets] is a detail we need from you. Nothing was made up to fill it.</p>
+      {c.pages.map((page) => (
+        <article key={page.slug || "home"} className="border-t border-[var(--line)] pt-6 first:border-t-0 first:pt-0">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h3 className="text-2xl">{page.seo_title}</h3>
+            <code className="font-mono text-[12px] text-[var(--muted)]">/{page.slug}</code>
+          </div>
+          <p className="mt-1 text-sm text-[var(--muted)]">Search description: {page.meta_description}</p>
+          <div className="mt-4 flex flex-col gap-4">
+            {page.sections.map((s, i) => (
+              <section key={i} className="rounded-lg border border-[var(--line)] bg-[var(--bg)] p-4">
+                <div className="mono !text-[10.5px]">{s.section}</div>
+                <h4 className="serif mt-1 text-[20px] font-semibold leading-snug"><Placeholders text={s.heading} /></h4>
+                {s.body && <p className="mt-1.5 whitespace-pre-line text-[15px]"><Placeholders text={s.body} /></p>}
+                {s.cta_label && <span className="btn btn-primary pointer-events-none mt-3 !py-1.5 !text-[13px]">{s.cta_label}</span>}
+              </section>
+            ))}
+          </div>
+        </article>
+      ))}
     </div>
   );
 }

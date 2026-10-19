@@ -139,3 +139,17 @@ async def test_status_endpoint(client, auth):
     r = await client.get("/llm/status", headers=auth)
     assert r.status_code == 200 and set(r.json()) == {"providers", "calls_today", "daily_limit"}
     assert "key" not in r.text.lower()
+
+
+async def test_rate_limits_get_more_patience_than_errors():
+    responses = iter([reply("slow", 429)] * 5 + [reply("finally")])
+    llm, seen, sleeps = make_client(lambda host, r: next(responses), providers=("a",))
+    assert (await llm.complete(MSG)).text == "finally"
+    assert len(seen) == 6 and len(sleeps) == 5
+
+
+async def test_rate_limit_attempts_are_capped():
+    llm, seen, _ = make_client(lambda host, r: reply("slow", 429), providers=("a",))
+    with pytest.raises(AllProvidersFailed):
+        await llm.complete(MSG)
+    assert len(seen) == 6

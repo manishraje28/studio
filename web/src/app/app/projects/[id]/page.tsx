@@ -5,7 +5,11 @@ import { useEffect, useRef, useState } from "react";
 import { api, streamEvents, type AgentEvent, type Artifact, type Project } from "@/lib/api";
 import { TEAM } from "@/lib/team";
 import { STAGES, STATUS_LABEL, stageIndex } from "@/components/app/status";
-import { ResearchView, StrategyView } from "@/components/app/ArtifactViews";
+import { CopyView, ResearchView, StrategyView, StyleView } from "@/components/app/ArtifactViews";
+import ApprovalPanel from "@/components/app/ApprovalPanel";
+
+const TAB_LABEL: Record<string, string> = { research: "Research file", strategy: "Strategy", style: "Style tile", copy: "Copy" };
+const TAB_ORDER = ["research", "strategy", "style", "copy"];
 
 const AGENT_COLOR: Record<string, string> = Object.fromEntries(TEAM.map((a) => [a.role, a.color]));
 
@@ -39,10 +43,12 @@ export default function ProjectPage() {
 
   const latest = new Map<string, Artifact>();
   for (const a of artifacts) if (!latest.has(a.kind) || latest.get(a.kind)!.version < a.version) latest.set(a.kind, a);
-  const kinds = [...latest.keys()];
+  const kinds = [...latest.keys()].sort((a, b) => TAB_ORDER.indexOf(a) - TAB_ORDER.indexOf(b));
   const active = tab && latest.has(tab) ? tab : kinds.at(-1) ?? null;
   const current = stageIndex(project.status);
-  const working = project.status !== "failed" && project.status !== "design";
+  const working = !["failed", "awaiting_approval", "building"].includes(project.status);
+  const style = latest.get("style");
+  const strategy = latest.get("strategy")?.content as { primary_action?: { label: string } } | undefined;
 
   return (
     <>
@@ -55,7 +61,7 @@ export default function ProjectPage() {
       </div>
 
       {/* stage rail */}
-      <ol className="mt-8 grid list-none grid-cols-3 gap-2 p-0 sm:grid-cols-6">
+      <ol className="mt-8 grid list-none grid-cols-4 gap-2 p-0 sm:grid-cols-7">
         {STAGES.map((s) => {
           const idx = stageIndex(s.status);
           const state = project.status === "failed" ? "todo" : idx < current ? "done" : idx === current ? "now" : "todo";
@@ -67,6 +73,12 @@ export default function ProjectPage() {
           );
         })}
       </ol>
+
+      {project.status === "awaiting_approval" && (
+        <div className="mt-8">
+          <ApprovalPanel projectId={project.id} onDone={(p) => { setProject(p); setTab(null); }} />
+        </div>
+      )}
 
       <div className="mt-10 grid gap-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.3fr)]">
         {/* live log */}
@@ -102,7 +114,7 @@ export default function ProjectPage() {
             {kinds.map((k) => (
               <button key={k} onClick={() => setTab(k)}
                 className={`cursor-pointer rounded-[5px] border px-3 py-1.5 text-[13px] font-semibold ${active === k ? "border-[var(--ink)] bg-[var(--ink)] text-[var(--bg)]" : "border-[var(--line)]"}`}>
-                {k === "research" ? "Research file" : k === "strategy" ? "Strategy" : k}
+                {TAB_LABEL[k] ?? k}{latest.get(k)!.version > 1 ? ` v${latest.get(k)!.version}` : ""}
               </button>
             ))}
           </div>
@@ -110,6 +122,10 @@ export default function ProjectPage() {
             {!active && <p className="text-[var(--muted)]">The research file appears here as soon as it is ready.</p>}
             {active === "research" && <ResearchView content={latest.get("research")!.content} />}
             {active === "strategy" && <StrategyView content={latest.get("strategy")!.content} />}
+            {active === "style" && style && (
+              <StyleView content={style.content} businessName={project.business_name} actionLabel={strategy?.primary_action?.label} />
+            )}
+            {active === "copy" && <CopyView content={latest.get("copy")!.content} />}
           </div>
         </section>
       </div>
