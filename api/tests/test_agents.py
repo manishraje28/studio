@@ -559,3 +559,87 @@ async def test_export_zip_and_publish(client, auth, user_id, session, fake_llm, 
     other = {"Authorization": f"Bearer {make_token(uuid.uuid4())}"}
     assert (await client.post(f"/projects/{project.id}/publish", headers=other)).status_code == 404
     assert (await client.get(f"/projects/{project.id}/export", headers=other)).status_code == 404
+
+
+async def test_revisions_undo_and_manual_edits(client, auth, user_id, session, fake_llm, monkeypatch):
+    from app.agents import revisions
+    from app.agents.copywriting import SectionCopy
+
+    project = await built_project(client, auth, session, user_id)
+    base = f"/projects/{project.id}"
+
+    async def fake_plan(self, ctx, request, page, section_index):
+        return revisions.RevisionPlan(
+            summary="Rewrite the hero and drop the menu's last section",
+            steps=[revisions.ChangeStep(op="edit_copy", page="", section_index=0, instruction=request)],
+        )
+
+    async def fake_rewrite(llm, ctx, page, section, instruction):
+        return SectionCopy(section="Hero", heading="Bridal makeup in Panaji", body="Book a trial.", cta_label="Book")
+
+    monkeypatch.setattr(revisions.Producer, "plan", fake_plan)
+    monkeypatch.setattr(revisions, "rewrite_section", fake_rewrite)
+
+    r = await client.post(f"{base}/revisions", json={"request": "Mention bridal makeup in the hero"}, headers=auth)
+    assert r.json()["status"] == "revising"
+    assert (await client.post(f"{base}/revisions", json={"request": "Another change"}, headers=auth)).status_code == 409
+    await drain()
+    await session.refresh(project)
+    assert project.status == ProjectStatus.PREVIEW
+
+    copy = (await client.get(f"{base}/artifacts", headers=auth)).json()
+    latest_copy = max((a for a in copy if a["kind"] == "copy"), key=lambda a: a["version"])
+    assert latest_copy["content"]["pages"][0]["sections"][0]["heading"] == "Bridal makeup in Panaji"
+    revs = (await client.get(f"{base}/revisions", headers=auth)).json()
+    assert (
+        revs[0]["summary"].startswith("Rewrite the hero") and revs[0]["after"]["copy"] == revs[0]["before"]["copy"] + 1
+    )
+
+    # Undo puts the old text back as a new version.
+    r = await client.post(f"{base}/revisions/{revs[0]['version']}/undo", headers=auth)
+    assert r.status_code == 200
+    arts = (await client.get(f"{base}/artifacts", headers=auth)).json()
+    restored = max((a for a in arts if a["kind"] == "copy"), key=lambda a: a["version"])
+    assert restored["content"]["pages"][0]["sections"][0]["heading"] == "Filter coffee, slowly"
+
+    # Manual edits: dashes cleaned, hype refused, strangers locked out.
+    r = await client.put(f"{base}/copy/:0", json={"heading": "Coffee — slowly", "body": "Open daily."}, headers=auth)
+    assert r.status_code == 200
+    arts = (await client.get(f"{base}/artifacts", headers=auth)).json()
+    edited = max((a for a in arts if a["kind"] == "copy"), key=lambda a: a["version"])
+    assert edited["content"]["pages"][0]["sections"][0]["heading"] == "Coffee, slowly"
+    bad = await client.put(f"{base}/copy/:0", json={"heading": "Elevate your mornings", "body": ""}, headers=auth)
+    assert bad.status_code == 422
+    assert (await client.put(f"{base}/copy/:9", json={"heading": "x"}, headers=auth)).status_code == 404
+    other = {"Authorization": f"Bearer {make_token(uuid.uuid4())}"}
+    assert (await client.post(f"{base}/revisions", json={"request": "hack it"}, headers=other)).status_code == 404
+
+
+async def test_revision_plan_ops_apply(session, user_id, fake_llm, monkeypatch):
+    from app.agents import revisions
+    from app.agents.copywriting import SectionCopy
+
+    project = await make_project(session, user_id)
+    await drain()
+    await queue.enqueue(session, "agent.copy", project_id=project.id)
+    await session.commit()
+    await drain()
+    ctx = await pipeline.load_context(session, project)
+
+    async def fake_rewrite(llm, ctx, page, section, instruction):
+        return SectionCopy(section="Offer", heading="Diwali offer", body="10% off sweets.", cta_label=None)
+
+    monkeypatch.setattr(revisions, "rewrite_section", fake_rewrite)
+    plan = revisions.RevisionPlan(
+        summary="x",
+        steps=[
+            revisions.ChangeStep(op="add_section", page="menu", instruction="Diwali offer"),
+            revisions.ChangeStep(op="remove_page", page="visit", instruction="not needed"),
+            revisions.ChangeStep(op="remove_page", page="", instruction="must be ignored"),
+        ],
+    )
+    changed, log = await revisions.apply_plan(session, pipeline.get_llm(), project, ctx, plan)
+    slugs = [p["slug"] for p in changed["copy"]["pages"]]
+    assert slugs == ["", "menu"]  # visit removed, home kept
+    assert changed["copy"]["pages"][1]["sections"][-1]["heading"] == "Diwali offer"
+    assert "layout" in changed and len(log) == 2

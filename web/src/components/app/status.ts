@@ -11,6 +11,7 @@ export const STATUS_LABEL: Record<ProjectStatus, string> = {
   qa: "Testing",
   preview: "Preview ready",
   live: "Live",
+  revising: "Making your changes",
   failed: "Stopped",
 };
 
@@ -26,5 +27,6 @@ export const STAGES: { status: ProjectStatus; label: string }[] = [
 ];
 
 const ORDER: ProjectStatus[] = ["briefed", "researching", "strategy", "design", "awaiting_approval", "copy", "building", "qa", "preview", "live"];
-// Waiting for approval still belongs to the art direction stage on the rail.
-export const stageIndex = (s: ProjectStatus) => ORDER.indexOf(s === "awaiting_approval" ? "design" : s);
+// Waiting for approval belongs to art direction on the rail; revisions happen during review.
+export const stageIndex = (s: ProjectStatus) =>
+  ORDER.indexOf(s === "awaiting_approval" ? "design" : s === "revising" ? "preview" : s);

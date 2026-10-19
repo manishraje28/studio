@@ -25,6 +25,7 @@ class ProjectStatus(enum.StrEnum):
     QA = "qa"
     PREVIEW = "preview"
     LIVE = "live"
+    REVISING = "revising"
     FAILED = "failed"
 
 

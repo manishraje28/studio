@@ -10,6 +10,7 @@ import ApprovalPanel from "@/components/app/ApprovalPanel";
 import DetailsPanel from "@/components/app/DetailsPanel";
 import PhotosPanel from "@/components/app/PhotosPanel";
 import PublishPanel from "@/components/app/PublishPanel";
+import RevisionPanel from "@/components/app/RevisionPanel";
 
 const TAB_LABEL: Record<string, string> = { research: "Research file", strategy: "Strategy", style: "Style tile", copy: "Copy", layout: "Preview", qa: "QA report" };
 const TAB_ORDER = ["layout", "qa", "research", "strategy", "style", "copy"];
@@ -56,6 +57,7 @@ export default function ProjectPage() {
   const active = tab && latest.has(tab) ? tab : latest.has("layout") ? "layout" : [...latest.keys()].sort((a, b) => TAB_ORDER.indexOf(a) - TAB_ORDER.indexOf(b)).at(-1) ?? null;
   const current = stageIndex(project.status);
   const working = !["failed", "awaiting_approval", "preview", "live"].includes(project.status);
+  // A finished revision changes status back to preview: refresh deliverables then too.
   const style = latest.get("style");
   const published = artifacts.filter((a) => a.kind === "publish").sort((a, b) => b.version - a.version)[0];
   const liveUrl = (published?.content?.url as string | undefined) ?? null;
@@ -94,6 +96,11 @@ export default function ProjectPage() {
       {(project.status === "preview" || project.status === "live") && (
         <div className="mt-8">
           <PublishPanel project={project} liveUrl={liveUrl} onPublishing={(p) => setProject(p)} />
+        </div>
+      )}
+      {["preview", "live", "revising"].includes(project.status) && (
+        <div className="mt-6">
+          <RevisionPanel project={project} onChange={(p) => setProject(p)} />
         </div>
       )}
       {(project.status === "preview" || project.status === "live") && (
@@ -156,7 +163,14 @@ export default function ProjectPage() {
             {active === "style" && style && (
               <StyleView content={style.content} businessName={project.business_name} actionLabel={strategy?.primary_action?.label} />
             )}
-            {active === "copy" && <CopyView content={latest.get("copy")!.content} />}
+            {active === "copy" && (
+              <CopyView
+                content={latest.get("copy")!.content}
+                onEdit={["preview", "live"].includes(project.status)
+                  ? async (slug, index, body) => { setProject(await api.editSection(project.id, slug, index, body)); api.artifacts(id).then(setArtifacts); setPreviewKey((k) => k + 1); }
+                  : undefined}
+              />
+            )}
             {active === "qa" && <QAView content={latest.get("qa")!.content} />}
             {active === "layout" && previewPath && (
               <div className="flex flex-col gap-3">

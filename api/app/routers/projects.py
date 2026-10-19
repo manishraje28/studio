@@ -6,6 +6,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import Response
+from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
@@ -344,6 +345,150 @@ async def publish_site(project_id: uuid.UUID, user: User, session: Session) -> P
         )
     await emit(session, project.id, "Owner", "status", "Approved the site for publishing.")
     await queue.enqueue(session, "agent.publish", project_id=project.id, max_attempts=2)
+    await session.commit()
+    await session.refresh(project)
+    return project
+
+
+MAX_REVISIONS = 10
+
+
+class RevisionIn(BaseModel):
+    request: Annotated[str, StringConstraints(min_length=4, max_length=1500)]
+    page: str | None = Field(default=None, max_length=60)
+    section_index: int | None = Field(default=None, ge=0, le=20)
+
+
+class SectionEdit(BaseModel):
+    heading: Annotated[str, StringConstraints(min_length=1, max_length=90)]
+    body: Annotated[str, StringConstraints(max_length=900)] = ""
+    cta_label: Annotated[str, StringConstraints(max_length=30)] | None = None
+
+
+async def _locked(session: AsyncSession, project_id: uuid.UUID, user_id: uuid.UUID) -> Project:
+    await owned_project(session, project_id, user_id)
+    return await session.scalar(
+        select(Project).where(Project.id == project_id).with_for_update().execution_options(populate_existing=True)
+    )
+
+
+@router.post("/{project_id}/revisions", response_model=ProjectOut)
+async def request_revision(project_id: uuid.UUID, body: RevisionIn, user: User, session: Session) -> Project:
+    """Ask for changes in plain words. The live site stays as it is until the owner publishes again."""
+    project = await _locked(session, project_id, user.id)
+    if project.status not in READY:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Wait until the current work is finished")
+    done = await session.scalar(
+        select(func.count()).select_from(Artifact).where(Artifact.project_id == project_id, Artifact.kind == "revision")
+    )
+    if done >= MAX_REVISIONS:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS, f"This demo allows {MAX_REVISIONS} change requests per project"
+        )
+    project.status = ProjectStatus.REVISING  # also blocks a second request until this one finishes
+    await emit(session, project.id, "Owner", "status", f"Asked for changes: {body.request}")
+    await queue.enqueue(session, "agent.revise", body.model_dump(), project_id=project.id, max_attempts=2)
+    await session.commit()
+    await session.refresh(project)
+    return project
+
+
+@router.get("/{project_id}/revisions")
+async def list_revisions(project_id: uuid.UUID, user: User, session: Session) -> list[dict]:
+    await owned_project(session, project_id, user.id)
+    rows = await session.scalars(
+        select(Artifact)
+        .where(Artifact.project_id == project_id, Artifact.kind == "revision")
+        .order_by(Artifact.version.desc())
+    )
+    return [{"version": a.version, "created_at": a.created_at, **a.content} for a in rows]
+
+
+@router.post("/{project_id}/revisions/{version}/undo", response_model=ProjectOut)
+async def undo_revision(project_id: uuid.UUID, version: int, user: User, session: Session) -> Project:
+    """Put the site back exactly as it was before that change request (as a new version, so it can be redone)."""
+    from app.agents.pipeline import save_artifact
+    from app.agents.revisions import current_versions
+
+    project = await _locked(session, project_id, user.id)
+    if project.status not in READY:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Wait until the current work is finished")
+    rev = await session.scalar(
+        select(Artifact).where(
+            Artifact.project_id == project_id, Artifact.kind == "revision", Artifact.version == version
+        )
+    )
+    if rev is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such change")
+    before_now = await current_versions(session, project_id)
+    for kind, v in rev.content.get("before", {}).items():
+        if before_now.get(kind) == v:
+            continue
+        old = await session.scalar(
+            select(Artifact).where(Artifact.project_id == project_id, Artifact.kind == kind, Artifact.version == v)
+        )
+        if old is not None:
+            await save_artifact(session, project, kind, "Restore", old.content)
+    after = await current_versions(session, project_id)
+    await save_artifact(
+        session,
+        project,
+        "revision",
+        "Owner",
+        {
+            "request": f"Undo: {rev.content.get('request', '')}",
+            "summary": "Restored the earlier version",
+            "changes": ["Restored the site to how it was before this change"],
+            "before": before_now,
+            "after": after,
+        },
+    )
+    await emit(session, project.id, "Owner", "status", "Undid a change. Publish again to update the live site.")
+    await session.commit()
+    await session.refresh(project)
+    return project
+
+
+@router.put("/{project_id}/copy/{slug_index}", response_model=ProjectOut)
+async def edit_section(project_id: uuid.UUID, slug_index: str, body: SectionEdit, user: User, session: Session):
+    """Fix text by hand. Same house rules as the copywriter (dashes cleaned, hype words refused)."""
+    from pydantic import ValidationError
+
+    from app.agents.copywriting import PageCopy
+    from app.agents.pipeline import save_artifact
+    from app.agents.revisions import current_versions
+
+    project = await _locked(session, project_id, user.id)
+    if project.status not in READY:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Wait until the current work is finished")
+    slug, _, idx = slug_index.rpartition(":")
+    copy_art = await _latest(session, project_id, "copy")
+    pages = [dict(p) for p in copy_art.content["pages"]]
+    page = next((p for p in pages if p["slug"] == slug), None)
+    if page is None or not idx.isdigit() or int(idx) >= len(page["sections"]):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such section")
+    sections = [dict(s) for s in page["sections"]]
+    sections[int(idx)] = {**sections[int(idx)], **body.model_dump()}
+    try:
+        checked = PageCopy.model_validate({**page, "sections": sections})
+    except ValidationError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, exc.errors()[0]["msg"]) from exc
+    page.update(checked.model_dump())
+    before = await current_versions(session, project_id)
+    await save_artifact(session, project, "copy", "Owner", {"pages": pages})
+    await save_artifact(
+        session,
+        project,
+        "revision",
+        "Owner",
+        {
+            "request": "Edited text by hand",
+            "summary": f'Edited "{body.heading}"',
+            "changes": [f'Edited "{body.heading}"'],
+            "before": before,
+            "after": await current_versions(session, project_id),
+        },
+    )
     await session.commit()
     await session.refresh(project)
     return project

@@ -4,7 +4,7 @@ export const DEV_LOGIN = process.env.NEXT_PUBLIC_DEV_LOGIN === "true";
 const TOKEN_KEY = "studio.token";
 
 export type ProjectStatus =
-  | "briefed" | "researching" | "strategy" | "design" | "awaiting_approval" | "copy"
+  | "briefed" | "researching" | "strategy" | "design" | "awaiting_approval" | "copy" | "revising"
   | "building" | "qa" | "preview" | "live" | "failed";
 
 export type Project = {
@@ -39,6 +39,15 @@ export type Artifact = {
 export type Details = { details: { label: string; value: string }[]; questions: string[] };
 
 export type OwnerPhoto = { name: string; url: string; alt: string; width: number; height: number };
+
+export type Revision = {
+  version: number;
+  request: string;
+  summary: string;
+  changes: string[];
+  out_of_scope?: string | null;
+  created_at: string;
+};
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -95,6 +104,13 @@ export const api = {
   photos: (id: string) => request<OwnerPhoto[]>(`/projects/${id}/photos`),
   deletePhoto: (id: string, name: string) => request<OwnerPhoto[]>(`/projects/${id}/photos/${name}`, { method: "DELETE" }),
   publish: (id: string) => request<Project>(`/projects/${id}/publish`, { method: "POST" }),
+  revisions: (id: string) => request<Revision[]>(`/projects/${id}/revisions`),
+  requestRevision: (id: string, text: string) =>
+    request<Project>(`/projects/${id}/revisions`, { method: "POST", body: JSON.stringify({ request: text }) }),
+  undoRevision: (id: string, version: number) =>
+    request<Project>(`/projects/${id}/revisions/${version}/undo`, { method: "POST" }),
+  editSection: (id: string, slug: string, index: number, body: { heading: string; body: string; cta_label: string | null }) =>
+    request<Project>(`/projects/${id}/copy/${encodeURIComponent(slug)}:${index}`, { method: "PUT", body: JSON.stringify(body) }),
   rebuild: (id: string) => request<Project>(`/projects/${id}/rebuild`, { method: "POST" }),
   uploadPhoto: async (id: string, file: File): Promise<OwnerPhoto[]> => {
     // Multipart upload: let the browser set the Content-Type boundary.

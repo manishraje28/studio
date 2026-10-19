@@ -392,3 +392,10 @@ async def publish(session: AsyncSession, job: Job) -> dict[str, Any]:
     )
     await session.commit()
     return result
+
+
+@handler("agent.revise")
+async def revise(session: AsyncSession, job: Job) -> dict[str, Any]:
+    from app.agents.revisions import handle_revision
+
+    return await handle_revision(session, job, get_llm(), save_artifact, load_context)

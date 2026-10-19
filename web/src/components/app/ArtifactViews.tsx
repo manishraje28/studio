@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 type Fact = { claim: string; source: "brief" | "website" | "general knowledge" };
 type Research = {
@@ -215,11 +215,67 @@ function Placeholders({ text }: { text: string }) {
   );
 }
 
-export function CopyView({ content }: { content: Record<string, unknown> }) {
+type EditFn = (slug: string, index: number, body: { heading: string; body: string; cta_label: string | null }) => Promise<void>;
+
+function SectionCard({ s, onSave }: { s: Copy["pages"][number]["sections"][number]; onSave?: (b: { heading: string; body: string; cta_label: string | null }) => Promise<void> }) {
+  const [editing, setEditing] = useState(false);
+  const [heading, setHeading] = useState(s.heading);
+  const [body, setBody] = useState(s.body);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  if (editing && onSave) {
+    return (
+      <form
+        className="flex flex-col gap-2 rounded-lg border-[1.5px] border-[var(--ink)] bg-[var(--card)] p-4"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          setBusy(true);
+          setError(null);
+          try {
+            await onSave({ heading, body, cta_label: s.cta_label });
+            setEditing(false);
+          } catch (err) {
+            setError(err instanceof Error ? err.message : "Could not save");
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <div className="mono !text-[10.5px]">{s.section}</div>
+        <input className="field serif !text-[18px]" value={heading} maxLength={90} onChange={(e) => setHeading(e.target.value)} />
+        <textarea className="field" value={body} maxLength={900} onChange={(e) => setBody(e.target.value)} />
+        {error && <p className="text-sm text-[#b42318]">{error}</p>}
+        <div className="flex gap-2">
+          <button className="btn btn-primary !py-1.5 !text-[13px]" disabled={busy}>{busy ? "Saving" : "Save"}</button>
+          <button type="button" className="btn btn-ghost !py-1.5 !text-[13px]" onClick={() => { setEditing(false); setHeading(s.heading); setBody(s.body); }}>Cancel</button>
+        </div>
+      </form>
+    );
+  }
+  return (
+    <section className="group relative rounded-lg border border-[var(--line)] bg-[var(--bg)] p-4">
+      <div className="mono !text-[10.5px]">{s.section}</div>
+      <h4 className="serif mt-1 text-[20px] font-semibold leading-snug"><Placeholders text={s.heading} /></h4>
+      {s.body && <p className="mt-1.5 whitespace-pre-line text-[15px]"><Placeholders text={s.body} /></p>}
+      {s.cta_label && <span className="btn btn-primary pointer-events-none mt-3 !py-1.5 !text-[13px]">{s.cta_label}</span>}
+      {onSave && (
+        <button className="absolute right-3 top-3 cursor-pointer rounded-[5px] border border-[var(--line)] bg-[var(--card)] px-2.5 py-1 text-[12px] font-semibold hover:border-[var(--ink)]" onClick={() => setEditing(true)}>
+          Edit
+        </button>
+      )}
+    </section>
+  );
+}
+
+export function CopyView({ content, onEdit }: { content: Record<string, unknown>; onEdit?: EditFn }) {
   const c = content as Copy;
   return (
     <div className="flex flex-col gap-8">
-      <p className="text-sm text-[var(--muted)]">Highlighted text in [brackets] is a detail we need from you. Nothing was made up to fill it.</p>
+      <p className="text-sm text-[var(--muted)]">
+        Highlighted text in [brackets] is a detail we need from you. Nothing was made up to fill it.
+        {onEdit && " Use Edit on any section to fix the wording yourself."}
+      </p>
       {c.pages.map((page) => (
         <article key={page.slug || "home"} className="border-t border-[var(--line)] pt-6 first:border-t-0 first:pt-0">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -229,12 +285,7 @@ export function CopyView({ content }: { content: Record<string, unknown> }) {
           <p className="mt-1 text-sm text-[var(--muted)]">Search description: {page.meta_description}</p>
           <div className="mt-4 flex flex-col gap-4">
             {page.sections.map((s, i) => (
-              <section key={i} className="rounded-lg border border-[var(--line)] bg-[var(--bg)] p-4">
-                <div className="mono !text-[10.5px]">{s.section}</div>
-                <h4 className="serif mt-1 text-[20px] font-semibold leading-snug"><Placeholders text={s.heading} /></h4>
-                {s.body && <p className="mt-1.5 whitespace-pre-line text-[15px]"><Placeholders text={s.body} /></p>}
-                {s.cta_label && <span className="btn btn-primary pointer-events-none mt-3 !py-1.5 !text-[13px]">{s.cta_label}</span>}
-              </section>
+              <SectionCard key={`${page.slug}-${i}-${s.heading}`} s={s} onSave={onEdit ? (b) => onEdit(page.slug, i, b) : undefined} />
             ))}
           </div>
         </article>
