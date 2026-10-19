@@ -17,7 +17,9 @@ from app.models import Artifact, Brief, Job, Project, ProjectStatus
 from app.registry import handler
 from app.site import qa
 from app.site.details import fill
+from app.site.export import StaticSite, collect_photos, page_path, page_url
 from app.site.images import search_stock
+from app.site.publish import deploy, project_name
 from app.site.render import render_site
 
 
@@ -298,7 +300,7 @@ def photo_pool(project: Project, artifacts: dict[str, dict], media_url) -> list[
 
 
 def render_project(
-    project: Project, artifacts: dict[str, dict], url_for, media_url=lambda name: name
+    project: Project, artifacts: dict[str, dict], url_for, media_url=lambda name: name, photos: list[dict] | None = None
 ) -> dict[str, str]:
     values = artifacts.get("details", {}).get("values", {})
     return render_site(
@@ -310,7 +312,7 @@ def render_project(
         copy=fill(artifacts["copy"], values),
         layout=artifacts["layout"],
         url_for=url_for,
-        photos=photo_pool(project, artifacts, media_url),
+        photos=photos if photos is not None else photo_pool(project, artifacts, media_url),
         details=values,
     )
 
@@ -348,3 +350,45 @@ async def quality_check(session: AsyncSession, job: Job) -> dict[str, Any]:
     await emit(session, project.id, "Producer", "status", "Your preview is ready to review.")
     await session.commit()
     return {"score": site_score}
+
+
+async def build_static(project: Project, artifacts: dict[str, dict]) -> StaticSite:
+    """The finished site as plain files, with photos copied in. Used by download and publish."""
+    pool = photo_pool(project, artifacts, lambda name: name)
+    photos, files = await collect_photos(project.id, pool)
+    pages = render_project(project, artifacts, page_url, photos=photos)
+    files.update({page_path(slug): html.encode() for slug, html in pages.items()})
+    files["404.html"] = pages.get("", "").encode()
+    return StaticSite(files)
+
+
+@handler("agent.publish")
+async def publish(session: AsyncSession, job: Job) -> dict[str, Any]:
+    from app.config import get_settings
+
+    project = await _project(session, job)
+    if project is None:
+        return {"skipped": "project deleted"}
+    settings = get_settings()
+    if not (settings.cloudflare_account_id and settings.cloudflare_api_token):
+        raise RuntimeError("Publishing is not configured (CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN)")
+    ctx = await load_context(session, project)
+    await emit(session, project.id, "Publisher", "progress", "Packing pages and photos")
+    await session.commit()
+    site = await build_static(project, ctx.artifacts)
+    await emit(session, project.id, "Publisher", "progress", f"Uploading {len(site.files)} files to Cloudflare")
+    await session.commit()
+    name = project_name(project.business_name, str(project.id))
+    result = await deploy(site.files, name, settings.cloudflare_account_id, settings.cloudflare_api_token)
+    await save_artifact(session, project, "publish", "Publisher", {**result, "files": len(site.files)})
+    project.status = ProjectStatus.LIVE
+    await emit(
+        session,
+        project.id,
+        "Publisher",
+        "artifact",
+        f"Your site is live at {result['url']}",
+        {"kind": "publish", "url": result["url"]},
+    )
+    await session.commit()
+    return result

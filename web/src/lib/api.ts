@@ -94,6 +94,7 @@ export const api = {
     request<Details>(`/projects/${id}/details`, { method: "PUT", body: JSON.stringify({ values }) }),
   photos: (id: string) => request<OwnerPhoto[]>(`/projects/${id}/photos`),
   deletePhoto: (id: string, name: string) => request<OwnerPhoto[]>(`/projects/${id}/photos/${name}`, { method: "DELETE" }),
+  publish: (id: string) => request<Project>(`/projects/${id}/publish`, { method: "POST" }),
   rebuild: (id: string) => request<Project>(`/projects/${id}/rebuild`, { method: "POST" }),
   uploadPhoto: async (id: string, file: File): Promise<OwnerPhoto[]> => {
     // Multipart upload: let the browser set the Content-Type boundary.

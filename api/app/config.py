@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     # Hard stop on total model calls per UTC day, so a public demo cannot drain free quotas.
     llm_daily_call_limit: int = 400
 
+    # Publishing client sites to Cloudflare Pages (free). Token needs "Cloudflare Pages: Edit".
+    cloudflare_account_id: str | None = None
+    cloudflare_api_token: str | None = None
+
     # Worker tuning
     worker_poll_seconds: float = 1.0
     job_lock_timeout_seconds: int = 600

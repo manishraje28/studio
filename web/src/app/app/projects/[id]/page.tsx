@@ -9,6 +9,7 @@ import { CopyView, QAView, ResearchView, StrategyView, StyleView } from "@/compo
 import ApprovalPanel from "@/components/app/ApprovalPanel";
 import DetailsPanel from "@/components/app/DetailsPanel";
 import PhotosPanel from "@/components/app/PhotosPanel";
+import PublishPanel from "@/components/app/PublishPanel";
 
 const TAB_LABEL: Record<string, string> = { research: "Research file", strategy: "Strategy", style: "Style tile", copy: "Copy", layout: "Preview", qa: "QA report" };
 const TAB_ORDER = ["layout", "qa", "research", "strategy", "style", "copy"];
@@ -56,6 +57,8 @@ export default function ProjectPage() {
   const current = stageIndex(project.status);
   const working = !["failed", "awaiting_approval", "preview", "live"].includes(project.status);
   const style = latest.get("style");
+  const published = artifacts.filter((a) => a.kind === "publish").sort((a, b) => b.version - a.version)[0];
+  const liveUrl = (published?.content?.url as string | undefined) ?? null;
   const strategy = latest.get("strategy")?.content as { primary_action?: { label: string } } | undefined;
 
   return (
@@ -90,6 +93,11 @@ export default function ProjectPage() {
 
       {(project.status === "preview" || project.status === "live") && (
         <div className="mt-8">
+          <PublishPanel project={project} liveUrl={liveUrl} onPublishing={(p) => setProject(p)} />
+        </div>
+      )}
+      {(project.status === "preview" || project.status === "live") && (
+        <div className="mt-6">
           <DetailsPanel projectId={project.id} onSaved={() => { setPreviewKey((k) => k + 1); setTab("layout"); }} />
         </div>
       )}

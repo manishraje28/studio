@@ -515,3 +515,46 @@ def test_oversized_photo_rejected_before_decode(monkeypatch):
     monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000 * 700)  # smaller than the 1200x800 test image
     with pytest.raises(UploadError, match="too large"):
         save_upload(uuid.uuid4(), png_bytes())
+
+
+async def test_export_zip_and_publish(client, auth, user_id, session, fake_llm, monkeypatch):
+    import io as _io
+    import zipfile
+
+    project = await built_project(client, auth, session, user_id)
+    await client.post(
+        f"/projects/{project.id}/photos", files={"file": ("front.png", png_bytes(), "image/png")}, headers=auth
+    )
+
+    r = await client.get(f"/projects/{project.id}/export", headers=auth)
+    assert r.status_code == 200 and r.headers["content-type"] == "application/zip"
+    z = zipfile.ZipFile(_io.BytesIO(r.content))
+    names = z.namelist()
+    assert {"index.html", "menu/index.html", "visit/index.html", "404.html", "README.md"} <= set(names)
+    assets = [n for n in names if n.startswith("assets/")]
+    assert len(assets) == 1  # the owner's photo is copied in; unreachable stock photos are dropped
+    home = z.read("index.html").decode()
+    assert f'src="/{assets[0]}"' in home and 'href="/menu/"' in home and "/preview/" not in home
+
+    calls = {}
+
+    async def fake_deploy(files, name, account_id, token):
+        calls.update(files=files, name=name)
+        return {"url": f"https://{name}.pages.dev", "deployment_url": "https://abc.x.pages.dev", "id": "d1"}
+
+    monkeypatch.setattr(pipeline, "deploy", fake_deploy)
+    monkeypatch.setattr(
+        "app.config.get_settings",
+        lambda: type("S", (), {"cloudflare_account_id": "acc", "cloudflare_api_token": "tok"})(),
+    )
+    r = await client.post(f"/projects/{project.id}/publish", headers=auth)
+    assert r.status_code == 200
+    await drain()
+    await session.refresh(project)
+    assert project.status == ProjectStatus.LIVE
+    assert calls["name"].startswith("kaapi-house-") and "index.html" in calls["files"]
+    msgs = [e.message for e in await since(session, project.id)]
+    assert any("Your site is live at https://kaapi-house-" in m for m in msgs)
+    other = {"Authorization": f"Bearer {make_token(uuid.uuid4())}"}
+    assert (await client.post(f"/projects/{project.id}/publish", headers=other)).status_code == 404
+    assert (await client.get(f"/projects/{project.id}/export", headers=other)).status_code == 404

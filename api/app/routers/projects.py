@@ -1,9 +1,11 @@
 import asyncio
+import re
 import uuid
 from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+from fastapi.responses import Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
@@ -22,6 +24,7 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 # Each revision costs model calls from the shared free quota.
 MAX_STYLE_VERSIONS = 5
 MAX_BUILDS = 8
+MAX_PUBLISHES = 20
 # At most two photos decode at once, so a burst of uploads cannot exhaust memory.
 DECODE_SLOTS = asyncio.Semaphore(2)
 Session = Annotated[AsyncSession, Depends(get_session)]
@@ -286,6 +289,50 @@ async def rebuild(project_id: uuid.UUID, user: User, session: Session) -> Projec
     project.status = ProjectStatus.BUILDING
     await emit(session, project.id, "Owner", "status", "Asked the developer to rebuild the pages.")
     await queue.enqueue(session, "agent.build", project_id=project.id)
+    await session.commit()
+    await session.refresh(project)
+    return project
+
+
+READY = (ProjectStatus.PREVIEW, ProjectStatus.LIVE)
+
+
+@router.get("/{project_id}/export")
+async def export_zip(project_id: uuid.UUID, user: User, session: Session) -> Response:
+    """The whole site as a ZIP: HTML pages, photos and a README."""
+    from app.agents.pipeline import build_static, load_context
+    from app.site.export import to_zip
+
+    project = await owned_project(session, project_id, user.id)
+    if project.status not in READY:
+        raise HTTPException(status.HTTP_409_CONFLICT, "The site is not ready yet")
+    site = await build_static(project, (await load_context(session, project)).artifacts)
+    name = re.sub(r"[^a-z0-9]+", "-", project.business_name.lower()).strip("-") or "site"
+    return Response(
+        to_zip(site, project.business_name),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{name}-website.zip"'},
+    )
+
+
+@router.post("/{project_id}/publish", response_model=ProjectOut)
+async def publish_site(project_id: uuid.UUID, user: User, session: Session) -> Project:
+    """Put the current version live on Cloudflare Pages. Publishing again updates the same link."""
+    await owned_project(session, project_id, user.id)
+    project = await session.scalar(
+        select(Project).where(Project.id == project_id).with_for_update().execution_options(populate_existing=True)
+    )
+    if project.status not in READY:
+        raise HTTPException(status.HTTP_409_CONFLICT, "The site is not ready yet")
+    publishes = await session.scalar(
+        select(func.count()).select_from(Artifact).where(Artifact.project_id == project_id, Artifact.kind == "publish")
+    )
+    if publishes >= MAX_PUBLISHES:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS, f"This demo allows {MAX_PUBLISHES} publishes per project"
+        )
+    await emit(session, project.id, "Owner", "status", "Approved the site for publishing.")
+    await queue.enqueue(session, "agent.publish", project_id=project.id, max_attempts=2)
     await session.commit()
     await session.refresh(project)
     return project
