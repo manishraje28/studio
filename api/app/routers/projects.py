@@ -221,18 +221,30 @@ async def upload_photo(
     """Add one of the owner's photos. Resized, re-encoded as JPEG and stripped of metadata."""
     from app.agents.pipeline import save_artifact
 
+    await owned_project(session, project_id, user.id)
+    if len(await _photos(session, project_id)) >= MAX_PHOTOS:  # cheap early check; rechecked under the lock
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Up to {MAX_PHOTOS} photos per project")
+    await session.commit()  # release the DB connection before the slow part
+
+    data = await file.read(8 * 1024 * 1024 + 1)
+    # Decode in a thread, at most two at a time, without holding a DB connection or lock.
+    try:
+        await asyncio.wait_for(DECODE_SLOTS.acquire(), timeout=20)
+    except TimeoutError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Busy processing photos, try again") from exc
+    try:
+        name, w, h = await asyncio.to_thread(save_upload, project_id, data)
+    except UploadError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+    finally:
+        DECODE_SLOTS.release()
+
     project = await owned_project(session, project_id, user.id)
     await session.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(f"photos:{project_id}", 0))))
     items = await _photos(session, project_id)
     if len(items) >= MAX_PHOTOS:
+        delete_upload(project_id, name)
         raise HTTPException(status.HTTP_409_CONFLICT, f"Up to {MAX_PHOTOS} photos per project")
-    data = await file.read(8 * 1024 * 1024 + 1)
-    try:
-        # Decoding runs in a thread so a large photo cannot stall every other request.
-        async with DECODE_SLOTS:
-            name, w, h = await asyncio.to_thread(save_upload, project_id, data)
-    except UploadError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     alt = (file.filename or "").rsplit(".", 1)[0].replace("_", " ").replace("-", " ")[:100]
     items.append({"name": name, "width": w, "height": h, "alt": alt or project.business_name})
     await save_artifact(session, project, "photos", "Owner", {"items": items})
