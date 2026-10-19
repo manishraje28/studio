@@ -1,0 +1,4 @@
+{ "version": "0.0.1", "configurations": [
+  { "name": "web", "runtimeExecutable": "npm", "runtimeArgs": ["run","dev","--prefix","web","--","-p","3000"], "port": 3000 },
+  { "name": "design", "runtimeExecutable": "npx", "runtimeArgs": ["-y","http-server","D:/studio/design","-p","5177","-c-1"], "port": 5177 }
+] }
