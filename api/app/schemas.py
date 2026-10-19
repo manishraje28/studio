@@ -1,10 +1,13 @@
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, StringConstraints, field_validator
 
 from app.models import ProjectStatus
+
+AnswerKey = Annotated[str, StringConstraints(min_length=1, max_length=60, pattern=r"^[a-z][a-z0-9_]*$")]
+AnswerText = Annotated[str, StringConstraints(max_length=2000)]
 
 
 class BriefIn(BaseModel):
@@ -12,10 +15,20 @@ class BriefIn(BaseModel):
     business_type: str = Field(min_length=2, max_length=80, examples=["café"])
     city: str | None = Field(default=None, max_length=80)
     website_url: HttpUrl | None = None
-    answers: dict[str, Any] = Field(
+    # Flat text answers only (no nesting), capped so a brief cannot balloon storage or prompts.
+    answers: dict[AnswerKey, AnswerText | list[AnswerText]] = Field(
         default_factory=dict,
         description="Brief chat answers, e.g. audience, tone, must-have pages, main call to action.",
     )
+
+    @field_validator("answers")
+    @classmethod
+    def limit_answers(cls, v: dict[str, str | list[str]]) -> dict[str, str | list[str]]:
+        if len(v) > 30:
+            raise ValueError("at most 30 answers")
+        if any(isinstance(a, list) and len(a) > 20 for a in v.values()):
+            raise ValueError("at most 20 items per answer")
+        return v
 
 
 class ProjectOut(BaseModel):

@@ -31,6 +31,9 @@ async def owned_project(session: AsyncSession, project_id: uuid.UUID, owner_id: 
 async def create_project(
     body: BriefIn, user: User, session: Session, settings: Annotated[Settings, Depends(get_settings)]
 ) -> Project:
+    # Serialize project creation per user so parallel requests cannot all pass the limit check.
+    # The lock is released when this transaction commits or rolls back.
+    await session.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(str(user.id), 0))))
     start_of_day = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
     today = await session.scalar(
         select(func.count()).select_from(Project).where(

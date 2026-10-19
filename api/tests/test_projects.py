@@ -66,3 +66,25 @@ async def test_daily_limit(client, auth):
     # The limit is per user.
     other = {"Authorization": f"Bearer {make_token(uuid.uuid4())}"}
     assert (await client.post("/projects", json=BRIEF, headers=other)).status_code == 201
+
+
+async def test_daily_limit_holds_under_parallel_requests(client, auth):
+    import asyncio
+
+    results = await asyncio.gather(*(client.post("/projects", json=BRIEF, headers=auth) for _ in range(8)))
+    codes = sorted(r.status_code for r in results)
+    assert codes.count(201) == 3 and codes.count(429) == 5
+
+
+async def test_brief_answers_are_bounded(client, auth):
+    ok = {**BRIEF, "answers": {"tone": "warm", "pages": ["Home", "Menu"]}}
+    assert (await client.post("/projects", json=ok, headers=auth)).status_code == 201
+    for bad in [
+        {"nested": {"a": 1}},
+        {"tone": "x" * 2001},
+        {f"k{i}": "v" for i in range(31)},
+        {"Bad Key": "v"},
+        {"pages": ["p"] * 21},
+    ]:
+        r = await client.post("/projects", json={**BRIEF, "answers": bad}, headers=auth)
+        assert r.status_code == 422, bad

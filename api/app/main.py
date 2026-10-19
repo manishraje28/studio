@@ -5,7 +5,7 @@ from sqlalchemy import text
 from app.auth import User
 from app.config import get_settings
 from app.db import SessionLocal
-from app.routers import projects
+from app.routers import llm, projects
 
 settings = get_settings()
 
@@ -18,6 +18,7 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
 )
 app.include_router(projects.router)
+app.include_router(llm.router)
 
 
 @app.get("/health", tags=["meta"])

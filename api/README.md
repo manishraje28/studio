@@ -31,3 +31,17 @@ Tests use the `studio_test` database created by `db/init/01-test-db.sql`.
 - Agents write `agent_events`; clients read them at `GET /projects/{id}/events` or live over SSE at `/events/stream`.
 - Auth: Supabase access tokens, verified through the project's JWKS (`SUPABASE_URL`) or the legacy HS256 secret.
 - Free-tier guardrail: `DAILY_PROJECT_LIMIT` new projects per user per day.
+
+## AI providers (free)
+
+`app/llm` talks to any OpenAI-compatible endpoint. Out of the box it knows Gemini, Groq,
+OpenRouter and Ollama, tried in `LLM_CHAIN` order. Each provider is rate limited to its free-tier
+requests per minute, 429/5xx/timeouts are retried with backoff (respecting `Retry-After`), and
+then the next provider is tried. Every call is logged to `llm_calls`, and `LLM_DAILY_CALL_LIMIT`
+stops all calls for the day once reached.
+
+```bash
+uv run python -m app.llm.smoke "Say hello in five words"   # checks your keys end to end
+```
+
+`GET /llm/status` shows the active providers and today's usage.
