@@ -5,11 +5,11 @@ import { useEffect, useRef, useState } from "react";
 import { API_URL, api, streamEvents, type AgentEvent, type Artifact, type Project } from "@/lib/api";
 import { TEAM } from "@/lib/team";
 import { STAGES, STATUS_LABEL, stageIndex } from "@/components/app/status";
-import { CopyView, ResearchView, StrategyView, StyleView } from "@/components/app/ArtifactViews";
+import { CopyView, QAView, ResearchView, StrategyView, StyleView } from "@/components/app/ArtifactViews";
 import ApprovalPanel from "@/components/app/ApprovalPanel";
 
-const TAB_LABEL: Record<string, string> = { research: "Research file", strategy: "Strategy", style: "Style tile", copy: "Copy", layout: "Preview" };
-const TAB_ORDER = ["layout", "research", "strategy", "style", "copy"];
+const TAB_LABEL: Record<string, string> = { research: "Research file", strategy: "Strategy", style: "Style tile", copy: "Copy", layout: "Preview", qa: "QA report" };
+const TAB_ORDER = ["layout", "qa", "research", "strategy", "style", "copy"];
 
 const AGENT_COLOR: Record<string, string> = Object.fromEntries(TEAM.map((a) => [a.role, a.color]));
 
@@ -131,6 +131,7 @@ export default function ProjectPage() {
               <StyleView content={style.content} businessName={project.business_name} actionLabel={strategy?.primary_action?.label} />
             )}
             {active === "copy" && <CopyView content={latest.get("copy")!.content} />}
+            {active === "qa" && <QAView content={latest.get("qa")!.content} />}
             {active === "layout" && previewPath && (
               <div className="flex flex-col gap-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">

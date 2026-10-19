@@ -10,11 +10,12 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import queue
-from app.agents.team import ArtDirector, Context, Copywriter, Developer, Researcher, Strategist
+from app.agents.team import ArtDirector, Context, Copywriter, Critic, Developer, Researcher, Strategist
 from app.events import emit
 from app.llm import get_llm
 from app.models import Artifact, Brief, Job, Project, ProjectStatus
 from app.registry import handler
+from app.site import qa
 from app.site.render import render_site
 
 
@@ -27,7 +28,9 @@ async def load_context(session: AsyncSession, project: Project) -> Context:
         .subquery()
     )
     rows = await session.scalars(
-        select(Artifact).join(latest, (Artifact.kind == latest.c.kind) & (Artifact.version == latest.c.v))
+        select(Artifact)
+        .join(latest, (Artifact.kind == latest.c.kind) & (Artifact.version == latest.c.v))
+        .where(Artifact.project_id == project.id)  # the subquery is scoped, the outer query must be too
     )
     return Context(project, brief.answers if brief else {}, {a.kind: a.content for a in rows})
 
@@ -251,10 +254,11 @@ async def build(session: AsyncSession, job: Job) -> dict[str, Any]:
         project.id,
         agent.name,
         "artifact",
-        f"Built {len(pages)} pages ({size} KB). The preview is ready for you.",
+        f"Built {len(pages)} pages ({size} KB). Sending them to the QA critic.",
         {"artifact_id": str(artifact.id), "kind": "layout"},
     )
-    project.status = ProjectStatus.PREVIEW
+    project.status = ProjectStatus.QA
+    await queue.enqueue(session, "agent.qa", project_id=project.id)
     await session.commit()
     return {"artifact": str(artifact.id), "pages": len(pages)}
 
@@ -270,3 +274,38 @@ def render_project(project: Project, artifacts: dict[str, dict], url_for) -> dic
         layout=artifacts["layout"],
         url_for=url_for,
     )
+
+
+@handler("agent.qa")
+async def quality_check(session: AsyncSession, job: Job) -> dict[str, Any]:
+    project = await _project(session, job)
+    if project is None:
+        return {"skipped": "project deleted"}
+    ctx = await load_context(session, project)
+    critic = Critic(get_llm())
+    await emit(session, project.id, critic.name, "progress", "Checking links, headings, search titles and mobile setup")
+    await session.commit()
+
+    pages = render_project(project, ctx.artifacts, lambda slug: f"/{slug}")
+    findings = qa.check_site(pages, lambda slug: f"/{slug}")
+    site_score = qa.score(findings)
+    await emit(session, project.id, critic.name, "progress", "Reading the copy for anything generic")
+    await session.commit()
+    review = await critic.review(ctx)
+
+    report = {"score": site_score, "findings": qa.as_dicts(findings), "review": review.model_dump()}
+    artifact = await save_artifact(session, project, "qa", critic.name, report)
+    fails = sum(f.severity == "fail" for f in findings)
+    await emit(
+        session,
+        project.id,
+        critic.name,
+        "artifact",
+        f"Site checks scored {site_score}/100 with {fails} failures. Copy specificity {review.specificity}/10, "
+        f"{len(review.generic_lines)} lines to sharpen.",
+        {"artifact_id": str(artifact.id), "kind": "qa"},
+    )
+    project.status = ProjectStatus.PREVIEW
+    await emit(session, project.id, "Producer", "status", "Your preview is ready to review.")
+    await session.commit()
+    return {"score": site_score}

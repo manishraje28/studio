@@ -10,7 +10,7 @@ from typing import Any
 
 from app.agents.copywriting import PageCopy
 from app.agents.design import StyleTile
-from app.agents.schemas import LayoutPlan, ResearchDossier, Strategy
+from app.agents.schemas import CopyReview, LayoutPlan, ResearchDossier, Strategy
 from app.agents.webfetch import FetchError, Page, fetch_page
 from app.llm import LLMClient
 from app.models import Project
@@ -236,3 +236,31 @@ class Developer:
             n = counts.get(page.slug, 0)
             page.blocks = (page.blocks + ["text"] * n)[:n]
         return plan
+
+
+class Critic:
+    name = "QA critic"
+
+    def __init__(self, llm: LLMClient):
+        self.llm = llm
+
+    async def review(self, ctx: Context) -> CopyReview:
+        copy = [
+            {"page": p["slug"] or "home", "lines": [f"{s['heading']}: {s['body']}" for s in p["sections"]]}
+            for p in ctx.artifacts["copy"]["pages"]
+        ]
+        prompt = (
+            f"<research>\n{json.dumps(ctx.artifacts['research'], ensure_ascii=False)}\n</research>\n\n"
+            f"<copy>\n{json.dumps(copy, ensure_ascii=False)}\n</copy>\n\n"
+            "Review the website copy. Could it only belong to this business, or could it be pasted onto any "
+            "competitor's site? Flag up to six lines that are generic, vague or not supported by the research, "
+            "and suggest a specific rewrite for each. Ignore [placeholders]."
+        )
+        return await self.llm.complete_json(
+            CopyReview,
+            [{"role": "user", "content": prompt}],
+            system=f"You are the QA critic, a strict editor.\n{GROUND_RULES}",
+            project_id=ctx.project.id,
+            agent=self.name,
+            temperature=0.2,
+        )

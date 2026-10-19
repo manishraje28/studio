@@ -153,3 +153,18 @@ async def test_rate_limit_attempts_are_capped():
     with pytest.raises(AllProvidersFailed):
         await llm.complete(MSG)
     assert len(seen) == 6
+
+
+async def test_json_validate_failure_retries_without_strict_mode():
+    bodies = []
+
+    def script(host, r):
+        body = json.loads(r.content)
+        bodies.append(body)
+        if "response_format" in body:
+            return httpx.Response(400, json={"error": {"code": "json_validate_failed"}})
+        return reply('{"pages": ["Home"], "cta": "Call"}')
+
+    llm, seen, _ = make_client(script, providers=("a",))
+    plan = await llm.complete_json(Plan, MSG)
+    assert plan.cta == "Call" and len(seen) == 2 and "response_format" not in bodies[1]

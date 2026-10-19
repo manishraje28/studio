@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 Source = Literal["brief", "website", "general knowledge"]
 
@@ -61,3 +61,31 @@ class PageLayout(BaseModel):
 
 class LayoutPlan(BaseModel):
     pages: list[PageLayout]
+
+
+class GenericLine(BaseModel):
+    page: str
+    text: str = Field(description="The exact line from the copy")
+    why: str = Field(description="Why it reads as generic or unsupported")
+    suggestion: str = Field(description="A more specific rewrite using facts from the research")
+
+
+class CopyReview(BaseModel):
+    @model_validator(mode="before")
+    @classmethod
+    def plain_dashes(cls, data):
+        from app.agents.copywriting import plain_punctuation
+
+        if isinstance(data, dict):
+            if isinstance(data.get("summary"), str):
+                data["summary"] = plain_punctuation(data["summary"])
+            for line in data.get("generic_lines") or []:
+                if isinstance(line, dict):
+                    for k in ("why", "suggestion"):
+                        if isinstance(line.get(k), str):
+                            line[k] = plain_punctuation(line[k])
+        return data
+
+    specificity: int = Field(ge=0, le=10, description="10 = could only be this business; 0 = could be any business")
+    summary: str = Field(description="Two sentences for the owner")
+    generic_lines: list[GenericLine] = Field(max_length=6)

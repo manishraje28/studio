@@ -242,3 +242,60 @@ export function CopyView({ content }: { content: Record<string, unknown> }) {
     </div>
   );
 }
+
+type QA = {
+  score: number;
+  findings: { page: string; check: string; severity: "pass" | "warn" | "fail"; message: string }[];
+  review: { specificity: number; summary: string; generic_lines: { page: string; text: string; why: string; suggestion: string }[] };
+};
+
+const SEV: Record<string, string> = { fail: "#b42318", warn: "#b54708", pass: "#2f6f4f" };
+
+export function QAView({ content }: { content: Record<string, unknown> }) {
+  const q = content as QA;
+  const issues = q.findings.filter((f) => f.severity !== "pass");
+  const passed = q.findings.length - issues.length;
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="grid grid-cols-2 gap-3">
+        <div className="rounded-lg border border-[var(--line)] bg-[var(--bg)] p-4">
+          <div className="mono">Site checks</div>
+          <div className="serif mt-1 text-[36px] font-semibold">{q.score}<small className="text-base text-[var(--muted)]">/100</small></div>
+          <div className="text-sm text-[var(--muted)]">{passed} checks passed</div>
+        </div>
+        <div className="rounded-lg border border-[var(--line)] bg-[var(--bg)] p-4">
+          <div className="mono">Copy specificity</div>
+          <div className="serif mt-1 text-[36px] font-semibold">{q.review.specificity}<small className="text-base text-[var(--muted)]">/10</small></div>
+          <div className="text-sm text-[var(--muted)]">How clearly it could only be you</div>
+        </div>
+      </div>
+      <Block title="What to look at">
+        {issues.length === 0 ? (
+          <p className="text-[15px]">Nothing to fix. Every page passed.</p>
+        ) : (
+          <ul className="m-0 flex list-none flex-col gap-2 p-0">
+            {issues.map((f, i) => (
+              <li key={i} className="flex flex-wrap items-baseline gap-2 text-[15px]">
+                <span className="rounded-[4px] border px-1.5 font-mono text-[11px] uppercase" style={{ color: SEV[f.severity], borderColor: SEV[f.severity] }}>{f.severity}</span>
+                <b>/{f.page === "home" ? "" : f.page}</b>
+                <span>{f.check}: {f.message}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Block>
+      <Block title="Editor's notes">
+        <p className="text-[15px]">{q.review.summary}</p>
+        <ul className="mt-3 flex list-none flex-col gap-3 p-0">
+          {q.review.generic_lines.map((g, i) => (
+            <li key={i} className="rounded-lg border border-[var(--line)] bg-[var(--bg)] p-3.5 text-[14.5px]">
+              <div className="text-[var(--muted)] line-through decoration-[var(--muted)]/50">{g.text}</div>
+              <div className="mt-1 font-semibold">{g.suggestion}</div>
+              <div className="mt-1 text-[13px] text-[var(--muted)]">{g.why} · /{g.page === "home" ? "" : g.page}</div>
+            </li>
+          ))}
+        </ul>
+      </Block>
+    </div>
+  );
+}

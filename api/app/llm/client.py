@@ -148,6 +148,11 @@ class LLMClient:
                 await self._log(provider, project_id, agent, started, False, status, error=error)
                 errors.append(f"{provider.name}#{attempt}: {error}")
                 log.warning("llm %s attempt %s failed: %s", provider.name, attempt, error)
+                # Some providers reject replies that fail their own JSON check. We validate JSON
+                # ourselves, so retry once without the strict mode before giving up on them.
+                if status == 400 and "json_validate_failed" in error and "response_format" in body:
+                    body = {k: v for k, v in body.items() if k != "response_format"}
+                    continue
                 # Auth errors, bad model names and the like will not fix themselves: next provider.
                 if status is not None and status not in RETRYABLE:
                     break

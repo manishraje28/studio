@@ -1,5 +1,6 @@
 import json
 import sys
+import uuid
 
 import httpx
 import pytest
@@ -93,6 +94,19 @@ def fake_llm(monkeypatch):
             out = STRATEGY
         elif "Art director" in system:
             out = STYLE
+        elif "QA critic" in system:
+            out = {
+                "specificity": 7,
+                "summary": "Mostly specific.",
+                "generic_lines": [
+                    {
+                        "page": "home",
+                        "text": "Quality coffee",
+                        "why": "Any café",
+                        "suggestion": "Filter coffee brewed in brass",
+                    }
+                ],
+            }
         elif "Developer" in system:
             out = {"pages": [{"slug": "", "blocks": ["hero_split"]}, {"slug": "menu", "blocks": ["cards"]}]}
         else:
@@ -381,6 +395,8 @@ async def test_preview(client, auth, user_id, session, fake_llm, monkeypatch):
     assert "default-src 'none'" in r.headers["content-security-policy"]
     html = r.text
     assert "<script>" not in html and "&lt;script&gt;" in html  # copy is escaped
+    arts = {a["kind"]: a for a in (await client.get(f"/projects/{project.id}/artifacts", headers=auth)).json()}
+    assert arts["qa"]["content"]["review"]["specificity"] == 7 and 0 <= arts["qa"]["content"]["score"] <= 100
     assert '<span class="ph">[opening hours]</span>' in html  # placeholders highlighted
     assert "Fraunces" in html and "#8a3b1c" in html  # style tile applied
     assert f"/preview/{project.id}/menu?t=" in html  # nav links keep the token
@@ -390,3 +406,17 @@ async def test_preview(client, auth, user_id, session, fake_llm, monkeypatch):
     assert (
         await client.get(f"/projects/{project.id}/preview", headers={"Authorization": "Bearer x"})
     ).status_code == 401
+
+
+async def test_context_never_mixes_projects(session, user_id):
+    a = Project(owner_id=user_id, business_name="A Cafe", business_type="cafe")
+    b = Project(owner_id=uuid.uuid4(), business_name="B Clinic", business_type="clinic")
+    session.add_all([a, b])
+    await session.flush()
+    await pipeline.save_artifact(session, a, "research", "Researcher", {"owner": "A"})
+    await pipeline.save_artifact(session, b, "research", "Researcher", {"owner": "B"})
+    await session.commit()
+    ctx_a = await pipeline.load_context(session, a)
+    ctx_b = await pipeline.load_context(session, b)
+    assert ctx_a.artifacts == {"research": {"owner": "A"}}
+    assert ctx_b.artifacts == {"research": {"owner": "B"}}
