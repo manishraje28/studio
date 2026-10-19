@@ -170,6 +170,9 @@ def save_upload(project_id: uuid.UUID, data: bytes) -> tuple[str, int, int]:
         raise UploadError("That file is not a photo we can read (use JPG, PNG or WebP)") from exc
     if img.format not in ("JPEG", "PNG", "WEBP"):
         raise UploadError("Use JPG, PNG or WebP")
+    # Header-only size check before decoding: Pillow's own bomb error only fires at twice MAX_IMAGE_PIXELS.
+    if img.width * img.height > Image.MAX_IMAGE_PIXELS:
+        raise UploadError("That photo is too large")
     if img.format == "JPEG":
         img.draft("RGB", (MAX_EDGE, MAX_EDGE))  # decode JPEGs at reduced size: much less memory and CPU
     img = ImageOps.exif_transpose(img).convert("RGB")

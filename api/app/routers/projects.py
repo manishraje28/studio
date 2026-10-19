@@ -22,6 +22,8 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 # Each revision costs model calls from the shared free quota.
 MAX_STYLE_VERSIONS = 5
 MAX_BUILDS = 8
+# At most two photos decode at once, so a burst of uploads cannot exhaust memory.
+DECODE_SLOTS = asyncio.Semaphore(2)
 Session = Annotated[AsyncSession, Depends(get_session)]
 
 
@@ -227,7 +229,8 @@ async def upload_photo(
     data = await file.read(8 * 1024 * 1024 + 1)
     try:
         # Decoding runs in a thread so a large photo cannot stall every other request.
-        name, w, h = await asyncio.to_thread(save_upload, project_id, data)
+        async with DECODE_SLOTS:
+            name, w, h = await asyncio.to_thread(save_upload, project_id, data)
     except UploadError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     alt = (file.filename or "").rsplit(".", 1)[0].replace("_", " ").replace("-", " ")[:100]

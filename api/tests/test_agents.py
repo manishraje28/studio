@@ -505,3 +505,13 @@ async def test_photos_upload_preview_and_rebuild(client, auth, user_id, session,
     assert (await client.delete(f"{base}/{photo['name']}", headers=auth)).json() == []
     other = {"Authorization": f"Bearer {make_token(uuid.uuid4())}"}
     assert (await client.get(base, headers=other)).status_code == 404
+
+
+def test_oversized_photo_rejected_before_decode(monkeypatch):
+    from PIL import Image
+
+    from app.site.images import UploadError, save_upload
+
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000 * 700)  # smaller than the 1200x800 test image
+    with pytest.raises(UploadError, match="too large"):
+        save_upload(uuid.uuid4(), png_bytes())
