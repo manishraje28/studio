@@ -15,7 +15,7 @@ from app.auth import User
 from app.config import Settings, get_settings
 from app.db import SessionLocal, get_session
 from app.events import emit
-from app.models import Artifact, Brief, Project, ProjectStatus
+from app.models import Artifact, Brief, Job, JobStatus, Project, ProjectStatus
 from app.schemas import ArtifactOut, BriefIn, DetailOut, DetailsIn, DetailsOut, DirectionDecision, EventOut, ProjectOut
 from app.site.details import find_placeholders
 from app.site.images import MAX_PHOTOS, UploadError, delete_upload, save_upload
@@ -327,6 +327,17 @@ async def publish_site(project_id: uuid.UUID, user: User, session: Session) -> P
     publishes = await session.scalar(
         select(func.count()).select_from(Artifact).where(Artifact.project_id == project_id, Artifact.kind == "publish")
     )
+    inflight = await session.scalar(
+        select(func.count())
+        .select_from(Job)
+        .where(
+            Job.project_id == project_id,
+            Job.kind == "agent.publish",
+            Job.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]),
+        )
+    )
+    if inflight:
+        raise HTTPException(status.HTTP_409_CONFLICT, "A publish is already in progress")
     if publishes >= MAX_PUBLISHES:
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS, f"This demo allows {MAX_PUBLISHES} publishes per project"

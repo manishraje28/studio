@@ -549,6 +549,7 @@ async def test_export_zip_and_publish(client, auth, user_id, session, fake_llm, 
     )
     r = await client.post(f"/projects/{project.id}/publish", headers=auth)
     assert r.status_code == 200
+    assert (await client.post(f"/projects/{project.id}/publish", headers=auth)).status_code == 409  # one at a time
     await drain()
     await session.refresh(project)
     assert project.status == ProjectStatus.LIVE
