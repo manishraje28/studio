@@ -133,9 +133,13 @@ async def apply_plan(
     replan = False
     budget = MAX_CALLS_PER_REVISION
 
+    stop_note = "Stopped early: this request was too big for one go, ask for the rest separately"
+
     def spend(n: int = 1) -> bool:
         nonlocal budget
         if budget < n:
+            if stop_note not in log:
+                log.append(stop_note)
             return False
         budget -= n
         return True
@@ -158,7 +162,6 @@ async def apply_plan(
             )
             for i in indexes:
                 if not spend():
-                    log.append("Stopped early: this request was too big for one go, ask for the rest separately")
                     break
                 await emit(session, project.id, "Copywriter", "progress", f"Rewriting {page['sections'][i]['heading']}")
                 await session.commit()
