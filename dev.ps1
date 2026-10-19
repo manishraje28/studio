@@ -10,7 +10,7 @@ Push-Location "$root\api"
 uv run python -m app.migrate
 Pop-Location
 
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$root\api'; `$host.UI.RawUI.WindowTitle='Studio API'; uv run uvicorn app.main:app --port 8000"
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$root\api'; `$host.UI.RawUI.WindowTitle='Studio API'; uv run uvicorn app.main:app --reload --port 8000"
 Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$root\api'; `$host.UI.RawUI.WindowTitle='Studio worker'; uv run python -m app.worker"
 Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$root\web'; `$host.UI.RawUI.WindowTitle='Studio web'; npm run dev"
 

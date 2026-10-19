@@ -69,3 +69,27 @@ class ArtifactOut(BaseModel):
 class DirectionDecision(BaseModel):
     decision: Literal["approve", "revise"]
     note: str | None = Field(default=None, max_length=1000, description="What to change, required for revise")
+
+
+class DetailsIn(BaseModel):
+    values: dict[
+        Annotated[str, StringConstraints(min_length=1, max_length=80)],
+        Annotated[str, StringConstraints(max_length=300)],
+    ]
+
+    @field_validator("values")
+    @classmethod
+    def not_too_many(cls, v: dict[str, str]) -> dict[str, str]:
+        if len(v) > 60:
+            raise ValueError("at most 60 details")
+        return v
+
+
+class DetailOut(BaseModel):
+    label: str
+    value: str
+
+
+class DetailsOut(BaseModel):
+    details: list[DetailOut]
+    questions: list[str]

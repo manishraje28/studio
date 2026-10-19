@@ -36,6 +36,8 @@ export type Artifact = {
   created_at: string;
 };
 
+export type Details = { details: { label: string; value: string }[]; questions: string[] };
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
@@ -85,6 +87,9 @@ export const api = {
     answers: Record<string, string>;
   }) => request<Project>("/projects", { method: "POST", body: JSON.stringify(brief) }),
   artifacts: (id: string) => request<Artifact[]>(`/projects/${id}/artifacts`),
+  details: (id: string) => request<Details>(`/projects/${id}/details`),
+  saveDetails: (id: string, values: Record<string, string>) =>
+    request<Details>(`/projects/${id}/details`, { method: "PUT", body: JSON.stringify({ values }) }),
   previewPath: (id: string) => request<{ path: string }>(`/projects/${id}/preview`),
   decideDirection: (id: string, decision: "approve" | "revise", note?: string) =>
     request<Project>(`/projects/${id}/direction`, { method: "POST", body: JSON.stringify({ decision, note }) }),

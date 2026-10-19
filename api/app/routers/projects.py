@@ -14,7 +14,8 @@ from app.config import Settings, get_settings
 from app.db import SessionLocal, get_session
 from app.events import emit
 from app.models import Artifact, Brief, Project, ProjectStatus
-from app.schemas import ArtifactOut, BriefIn, DirectionDecision, EventOut, ProjectOut
+from app.schemas import ArtifactOut, BriefIn, DetailOut, DetailsIn, DetailsOut, DirectionDecision, EventOut, ProjectOut
+from app.site.details import find_placeholders
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 # Each revision costs model calls from the shared free quota.
@@ -147,3 +148,46 @@ async def decide_direction(project_id: uuid.UUID, body: DirectionDecision, user:
     await session.commit()
     await session.refresh(project)
     return project
+
+
+async def _latest(session: AsyncSession, project_id: uuid.UUID, kind: str) -> Artifact | None:
+    return await session.scalar(
+        select(Artifact)
+        .where(Artifact.project_id == project_id, Artifact.kind == kind)
+        .order_by(Artifact.version.desc())
+        .limit(1)
+    )
+
+
+@router.get("/{project_id}/details", response_model=DetailsOut)
+async def get_details(project_id: uuid.UUID, user: User, session: Session) -> DetailsOut:
+    """The [placeholders] in the copy, with any values the owner already gave, plus open research questions."""
+    await owned_project(session, project_id, user.id)
+    copy = await _latest(session, project_id, "copy")
+    saved = await _latest(session, project_id, "details")
+    research = await _latest(session, project_id, "research")
+    values = saved.content.get("values", {}) if saved else {}
+    labels = find_placeholders(copy.content) if copy else []
+    return DetailsOut(
+        details=[DetailOut(label=label, value=values.get(label, "")) for label in labels],
+        questions=research.content.get("open_questions", []) if research else [],
+    )
+
+
+@router.put("/{project_id}/details", response_model=DetailsOut)
+async def save_details(project_id: uuid.UUID, body: DetailsIn, user: User, session: Session) -> DetailsOut:
+    project = await owned_project(session, project_id, user.id)
+    copy = await _latest(session, project_id, "copy")
+    if copy is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "The copy is not written yet")
+    known = set(find_placeholders(copy.content))
+    if unknown := sorted(set(body.values) - known):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, f"Unknown details: {', '.join(unknown)}")
+    from app.agents.pipeline import save_artifact
+
+    values = {k: v.strip() for k, v in body.values.items()}
+    await save_artifact(session, project, "details", "Owner", {"values": values})
+    filled = sum(1 for v in values.values() if v)
+    await emit(session, project.id, "Owner", "status", f"Filled in {filled} of {len(known)} details.")
+    await session.commit()
+    return await get_details(project_id, user, session)

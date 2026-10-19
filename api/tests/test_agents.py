@@ -14,6 +14,7 @@ from app.events import since
 from app.llm import LLMClient, Provider
 from app.models import Artifact, Brief, Job, JobStatus, Project, ProjectStatus
 from app.worker import run_one
+from tests.conftest import make_token
 
 RESEARCH = {
     "summary": "A small café in Pune known for filter coffee.",
@@ -420,3 +421,25 @@ async def test_context_never_mixes_projects(session, user_id):
     ctx_b = await pipeline.load_context(session, b)
     assert ctx_a.artifacts == {"research": {"owner": "A"}}
     assert ctx_b.artifacts == {"research": {"owner": "B"}}
+
+
+async def test_owner_fills_details(client, auth, user_id, session, fake_llm):
+    project = await make_project(session, user_id)
+    await drain()
+    await client.post(f"/projects/{project.id}/direction", json={"decision": "approve"}, headers=auth)
+    await drain()
+    url = f"/projects/{project.id}/details"
+
+    got = (await client.get(url, headers=auth)).json()
+    assert got["details"] == [{"label": "opening hours", "value": ""}] and got["questions"] == ["Opening hours?"]
+    assert (await client.put(url, json={"values": {"made up": "x"}}, headers=auth)).status_code == 422
+
+    r = await client.put(url, json={"values": {"opening hours": "7am to 9pm, <b>daily</b>"}}, headers=auth)
+    assert r.json()["details"][0]["value"] == "7am to 9pm, <b>daily</b>"
+
+    path = (await client.get(f"/projects/{project.id}/preview", headers=auth)).json()["path"]
+    html = (await client.get(path)).text
+    assert "Open 7am to 9pm, &lt;b&gt;daily&lt;/b&gt;." in html  # filled and still escaped
+    assert "[opening hours]" not in html
+    other = {"Authorization": f"Bearer {make_token(uuid.uuid4())}"}
+    assert (await client.get(url, headers=other)).status_code == 404

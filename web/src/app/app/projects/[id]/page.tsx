@@ -7,6 +7,7 @@ import { TEAM } from "@/lib/team";
 import { STAGES, STATUS_LABEL, stageIndex } from "@/components/app/status";
 import { CopyView, QAView, ResearchView, StrategyView, StyleView } from "@/components/app/ArtifactViews";
 import ApprovalPanel from "@/components/app/ApprovalPanel";
+import DetailsPanel from "@/components/app/DetailsPanel";
 
 const TAB_LABEL: Record<string, string> = { research: "Research file", strategy: "Strategy", style: "Style tile", copy: "Copy", layout: "Preview", qa: "QA report" };
 const TAB_ORDER = ["layout", "qa", "research", "strategy", "style", "copy"];
@@ -21,6 +22,7 @@ export default function ProjectPage() {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<string | null>(null);
   const [previewPath, setPreviewPath] = useState<string | null>(null);
+  const [previewKey, setPreviewKey] = useState(0);
   const seen = useRef(new Set<number>());
 
   useEffect(() => {
@@ -85,6 +87,12 @@ export default function ProjectPage() {
         </div>
       )}
 
+      {(project.status === "preview" || project.status === "live") && (
+        <div className="mt-8">
+          <DetailsPanel projectId={project.id} onSaved={() => { setPreviewKey((k) => k + 1); setTab("layout"); }} />
+        </div>
+      )}
+
       <div className="mt-10 grid gap-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.3fr)]">
         {/* live log */}
         <section className="card self-start overflow-hidden">
@@ -139,6 +147,7 @@ export default function ProjectPage() {
                   <a className="btn btn-ghost !py-1.5 !text-[13px]" href={`${API_URL}${previewPath}`} target="_blank" rel="noopener noreferrer">Open full size</a>
                 </div>
                 <iframe
+                  key={previewKey}
                   title={`Preview of ${project.business_name}`}
                   src={`${API_URL}${previewPath}`}
                   sandbox=""

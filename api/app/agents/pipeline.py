@@ -16,6 +16,7 @@ from app.llm import get_llm
 from app.models import Artifact, Brief, Job, Project, ProjectStatus
 from app.registry import handler
 from app.site import qa
+from app.site.details import fill
 from app.site.render import render_site
 
 
@@ -270,7 +271,7 @@ def render_project(project: Project, artifacts: dict[str, dict], url_for) -> dic
         city=project.city,
         strategy=artifacts["strategy"],
         style=artifacts["style"],
-        copy=artifacts["copy"],
+        copy=fill(artifacts["copy"], artifacts.get("details", {}).get("values", {})),
         layout=artifacts["layout"],
         url_for=url_for,
     )

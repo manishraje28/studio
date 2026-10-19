@@ -49,7 +49,10 @@ COPY_RULES = """Copy rules:
 - Write like the owner talking to a regular customer: short sentences, concrete nouns, no hype.
 - Headings say something specific about this business. No generic lines like "Welcome to our website".
 - Never write testimonials, ratings, years in business or numbers that are not in the brief or research.
-- Search titles under 60 characters, meta descriptions under 160."""
+- Search titles under 60 characters, meta descriptions under 160.
+- Placeholders in [square brackets] are only for short facts the owner can type: phone number, address,
+  opening hours, prices, WhatsApp number. Never write placeholders for photos, images, maps or videos;
+  describe the section in words instead. Reuse the same wording for the same fact, e.g. always [phone number]."""
 
 
 @dataclass
